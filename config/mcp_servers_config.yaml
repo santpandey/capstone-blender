@@ -1,0 +1,198 @@
+# MCP Servers Configuration
+# Multiple specialized servers for different Blender API categories
+
+# Global settings
+global:
+  host: "localhost"
+  base_port: 8000
+  log_level: "INFO"
+  enable_cors: true
+  max_concurrent_requests: 100
+
+# Vector store configuration (shared across servers)
+vector_store:
+  # Cost monitoring
+  cost_monitor:
+    metrics_file: "mcp_cost_metrics.json"
+    thresholds:
+      max_monthly_cost: 75.0        # Higher limit for production MCP usage
+      warning_threshold: 0.8
+      fallback_threshold: 0.9
+      search_cost_per_1k: 0.0004
+      storage_cost_per_gb: 0.25
+      insert_cost_per_1k: 0.002
+
+  # FAISS configuration (local/fallback)
+  faiss:
+    backend: "faiss"
+    index_path: "mcp_faiss_index"
+    model_name: "all-MiniLM-L6-v2"
+    dimension: 384
+
+  # Qdrant configuration (cloud/production)
+  qdrant:
+    backend: "qdrant"
+    model_name: "all-MiniLM-L6-v2"
+    dimension: 384
+    url: ":memory:"  # Development setting
+    api_key: null
+    timeout: 30
+
+  # Hybrid manager settings
+  auto_sync: true
+  sync_interval: 3600
+
+# Individual MCP servers configuration
+servers:
+  # Mesh Operations Server (234 APIs)
+  blender-mesh:
+    enabled: true
+    port: 8001
+    category: "mesh_operators"
+    description: "Mesh modeling, subdivision, deformation, and cleanup operations"
+    vector_store:
+      faiss:
+        index_path: "mesh_faiss_index"
+      qdrant:
+        collection_name: "mesh_apis"
+    
+    # Mesh-specific settings
+    operation_types:
+      - "modeling"
+      - "subdivision" 
+      - "deformation"
+      - "cleanup"
+      - "generation"
+      - "analysis"
+    
+    workflow_templates:
+      character_modeling: ["primitive_cube_add", "subdivide", "loopcut_slide", "extrude_region_move", "bevel"]
+      architectural: ["primitive_cube_add", "extrude_region_move", "inset_faces", "subdivide", "bevel"]
+      organic: ["primitive_uv_sphere_add", "subdivide", "vertices_smooth", "noise", "smooth"]
+
+  # Object Operations Server (189 APIs)
+  blender-objects:
+    enabled: true
+    port: 8002
+    category: "object_operators"
+    description: "Object transformation, duplication, hierarchy, and animation operations"
+    vector_store:
+      faiss:
+        index_path: "object_faiss_index"
+      qdrant:
+        collection_name: "object_apis"
+    
+    # Object-specific settings
+    operation_types:
+      - "transform"
+      - "duplication"
+      - "hierarchy"
+      - "properties"
+      - "animation"
+      - "constraints"
+
+  # Geometry Nodes Server (156 APIs)
+  blender-geometry:
+    enabled: true
+    port: 8003
+    category: "geometry_nodes"
+    description: "Geometry nodes for procedural modeling and effects"
+    vector_store:
+      faiss:
+        index_path: "geometry_faiss_index"
+      qdrant:
+        collection_name: "geometry_apis"
+    
+    # Geometry nodes specific settings
+    node_categories:
+      - "input"
+      - "output"
+      - "geometry"
+      - "mesh"
+      - "curve"
+      - "instances"
+      - "material"
+      - "texture"
+      - "utilities"
+
+  # Shader Nodes Server (143 APIs)
+  blender-shaders:
+    enabled: true
+    port: 8004
+    category: "shader_nodes"
+    description: "Shader nodes for materials and texturing"
+    vector_store:
+      faiss:
+        index_path: "shader_faiss_index"
+      qdrant:
+        collection_name: "shader_apis"
+    
+    # Shader-specific settings
+    node_categories:
+      - "input"
+      - "output"
+      - "shader"
+      - "texture"
+      - "color"
+      - "vector"
+      - "converter"
+      - "script"
+    
+    render_engines:
+      - "cycles"
+      - "eevee"
+      - "workbench"
+
+# Environment-specific overrides
+environments:
+  development:
+    global:
+      log_level: "DEBUG"
+    vector_store:
+      qdrant:
+        url: ":memory:"
+    servers:
+      blender-mesh:
+        enabled: true
+      blender-objects:
+        enabled: false  # Disable others for focused development
+      blender-geometry:
+        enabled: false
+      blender-shaders:
+        enabled: false
+
+  staging:
+    global:
+      base_port: 9000
+    vector_store:
+      cost_monitor:
+        max_monthly_cost: 25.0
+    servers:
+      blender-mesh:
+        enabled: true
+      blender-objects:
+        enabled: true
+      blender-geometry:
+        enabled: false
+      blender-shaders:
+        enabled: false
+
+  production:
+    global:
+      base_port: 8000
+      max_concurrent_requests: 500
+    vector_store:
+      cost_monitor:
+        max_monthly_cost: 200.0
+      qdrant:
+        url: "${QDRANT_URL}"
+        api_key: "${QDRANT_API_KEY}"
+    servers:
+      blender-mesh:
+        enabled: true
+      blender-objects:
+        enabled: true
+      blender-geometry:
+        enabled: true
+      blender-shaders:
+        enabled: true

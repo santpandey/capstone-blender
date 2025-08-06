@@ -1,0 +1,59 @@
+# Hybrid Vector Database Configuration
+# Supports FAISS (local/cost-effective) and Qdrant (cloud/production) with automatic fallback
+
+# Cost monitoring configuration
+cost_monitor:
+  metrics_file: "cost_metrics.json"
+  thresholds:
+    max_monthly_cost: 50.0        # Maximum monthly cost in USD
+    warning_threshold: 0.8        # Warn at 80% of max cost
+    fallback_threshold: 0.9       # Fallback at 90% of max cost
+    search_cost_per_1k: 0.0004    # Qdrant pricing per 1k searches
+    storage_cost_per_gb: 0.25     # Qdrant pricing per GB/month
+    insert_cost_per_1k: 0.002     # Qdrant pricing per 1k inserts
+
+# FAISS configuration (local/fallback)
+faiss:
+  backend: "faiss"
+  index_path: "faiss_index"
+  model_name: "all-MiniLM-L6-v2"
+  dimension: 384
+
+# Qdrant configuration (cloud/production)
+qdrant:
+  backend: "qdrant"
+  collection_name: "blender_apis"
+  model_name: "all-MiniLM-L6-v2"
+  dimension: 384
+  
+  # Development settings (in-memory)
+  url: ":memory:"
+  api_key: null
+  
+  # Production settings (uncomment and configure for cloud deployment)
+  # url: "https://your-cluster.qdrant.io"
+  # api_key: "${QDRANT_API_KEY}"  # Set via environment variable
+  
+  timeout: 30
+
+# Hybrid manager settings
+auto_sync: true                   # Sync documents between stores
+sync_interval: 3600              # Sync interval in seconds (1 hour)
+
+# Environment-specific overrides
+environments:
+  development:
+    active_backend: "faiss"      # Start with FAISS for development
+    qdrant:
+      url: ":memory:"            # Use in-memory Qdrant for testing
+  
+  staging:
+    active_backend: "qdrant"     # Use Qdrant for staging
+    cost_monitor:
+      max_monthly_cost: 25.0     # Lower cost limit for staging
+  
+  production:
+    active_backend: "qdrant"     # Use Qdrant for production
+    auto_sync: true              # Enable sync for redundancy
+    cost_monitor:
+      max_monthly_cost: 100.0    # Higher cost limit for production

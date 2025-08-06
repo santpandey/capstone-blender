@@ -6,6 +6,11 @@ requires-python = ">=3.11"
 dependencies = [
     "beautifulsoup4>=4.12.0",
     "lxml>=4.9.0",
+    "sentence-transformers>=2.2.0",
+    "faiss-cpu>=1.7.0",
+    "rapidfuzz>=3.0.0",
+    "numpy>=1.24.0",
+    "asyncio>=3.4.3",
 ]
 
 [project.optional-dependencies]
@@ -18,6 +23,11 @@ dev = [
 mcp = [
     "requests>=2.31.0",
     "aiohttp>=3.8.0",
+    "fastmcp>=0.1.0",
+    "pydantic>=2.0.0",
+]
+qdrant = [
+    "qdrant-client>=1.7.0",
 ]
 
 [tool.black]
