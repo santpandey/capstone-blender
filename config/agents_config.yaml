@@ -1,0 +1,118 @@
+# Configuration for Multi-Agent Pipeline
+# Agents for dynamic 3D asset generation
+
+# Global agent settings
+global:
+  log_level: "INFO"
+  max_execution_time_seconds: 300
+  health_check_interval_seconds: 60
+  enable_performance_monitoring: true
+  
+# Planner Agent Configuration
+planner_agent:
+  name: "planner_agent"
+  enabled: true
+  
+  # Planning settings
+  generate_alternatives: false
+  max_subtasks: 10
+  default_complexity: "moderate"
+  
+  # Time estimation settings
+  time_estimation:
+    base_multiplier: 1.0
+    complexity_adjustment: true
+    user_skill_factor: 1.0
+  
+  # Entity recognition settings
+  entity_recognition:
+    enable_advanced_nlp: false  # Set to true when LLM integration is added
+    confidence_threshold: 0.7
+    max_entities_per_type: 5
+  
+  # Task generation settings
+  task_generation:
+    enable_dependency_analysis: true
+    max_parallel_tasks: 3
+    priority_balancing: true
+    
+# Coordinator Agent Configuration (for future implementation)
+coordinator_agent:
+  name: "coordinator_agent"
+  enabled: false
+  
+  # MCP server settings
+  mcp_servers:
+    - name: "blender-mesh"
+      port: 8001
+      timeout_seconds: 30
+    - name: "blender-objects"
+      port: 8002
+      timeout_seconds: 30
+    - name: "blender-geometry"
+      port: 8003
+      timeout_seconds: 30
+    - name: "blender-shaders"
+      port: 8004
+      timeout_seconds: 30
+  
+  # API selection settings
+  api_selection:
+    use_vector_search: true
+    confidence_threshold: 0.8
+    max_alternatives: 3
+    fallback_to_fuzzy_search: true
+
+# Coder Agent Configuration (for future implementation)
+coder_agent:
+  name: "coder_agent"
+  enabled: false
+  
+  # Code generation settings
+  code_generation:
+    style: "pythonic"
+    include_error_handling: true
+    include_logging: true
+    max_script_length: 1000
+    
+  # Validation settings
+  validation:
+    syntax_check: true
+    api_compatibility_check: true
+    dependency_check: true
+
+# QA Agent Configuration (for future implementation)
+qa_agent:
+  name: "qa_agent"
+  enabled: false
+  
+  # Validation settings
+  validation:
+    geometric_validation: true
+    visual_validation: true
+    performance_validation: true
+    
+  # Multimodal settings
+  multimodal:
+    enable_screenshot_analysis: true
+    enable_mesh_analysis: true
+    confidence_threshold: 0.75
+
+# Environment-specific overrides
+environments:
+  development:
+    global:
+      log_level: "DEBUG"
+    planner_agent:
+      generate_alternatives: true
+      
+  staging:
+    global:
+      health_check_interval_seconds: 30
+      
+  production:
+    global:
+      log_level: "WARNING"
+      max_execution_time_seconds: 600
+    planner_agent:
+      max_subtasks: 15
