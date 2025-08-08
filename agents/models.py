@@ -235,3 +235,13 @@ class PipelineExecution(BaseModel):
         self.completed_at = time.time()
         self.total_execution_time = self.completed_at - self.started_at
         self.status = PipelineStatus.COMPLETED
+
+# ================= QA Agent Models =================
+
+class ValidationResult(BaseModel):
+    """Result of asset validation by QA Agent"""
+    is_valid: bool = Field(..., description="Whether the asset passes validation")
+    confidence_score: float = Field(..., description="Confidence in validation result (0-1)")
+    issues_found: List[str] = Field(default_factory=list, description="List of issues identified")
+    suggestions: List[str] = Field(default_factory=list, description="Improvement suggestions")
+    quality_metrics: Dict[str, float] = Field(default_factory=dict, description="Quality assessment metrics")
