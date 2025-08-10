@@ -470,39 +470,75 @@ class PlannerAgent(BaseAgent):
         return subtasks
     
     def _create_character_subtask(
-        self, 
+        self,
         task_id: int, 
         entities: List[Dict[str, Any]], 
         analysis: Dict[str, Any]
     ) -> SubTask:
-        """Create subtask for character creation"""
+        """Create granular subtask for character creation with specific Blender operations"""
         
-        entity_texts = [e["text"] for e in entities]
+        entity_texts = [entity["text"] for entity in entities]
         descriptors = analysis.get("descriptors", [])
+        actions = analysis.get("actions", [])
+        
+        # Determine if character is sitting (affects mesh operations)
+        is_sitting = any(action in ["sitting"] for action in actions)
+        
+        # Create granular, Blender-specific requirements
+        granular_requirements = [
+            "add_cube_primitive_for_torso",
+            "scale_torso_to_human_proportions", 
+            "add_sphere_primitive_for_head",
+            "position_head_above_torso",
+            "add_cylinder_primitives_for_arms",
+            "add_cylinder_primitives_for_legs",
+        ]
+        
+        if is_sitting:
+            granular_requirements.extend([
+                "rotate_legs_90_degrees_for_sitting",
+                "position_legs_for_chair_sitting",
+                "adjust_torso_angle_for_sitting_posture"
+            ])
+        
+        # Specific mesh operations that Coordinator can map to APIs
+        specific_mesh_operations = [
+            "mesh.primitive_cube_add",      # For torso
+            "mesh.primitive_uv_sphere_add", # For head  
+            "mesh.primitive_cylinder_add",  # For limbs
+            "transform.resize",             # For scaling
+            "transform.translate",          # For positioning
+            "transform.rotate"              # For posing
+        ]
         
         return SubTask(
             task_id=f"task_{task_id:03d}",
             type=TaskType.CREATE_CHARACTER,
-            title=f"Create Character: {', '.join(entity_texts)}",
-            description=f"Create 3D character model with features: {', '.join(descriptors)}",
-            requirements=[
-                "human_base_mesh",
-                "facial_features",
-                "body_proportions",
-                "character_details"
-            ],
+            title="Add Basic Human Mesh Primitives",
+            description=f"Create basic human figure using Blender primitives: cube for torso, sphere for head, cylinders for limbs. {'Configure for sitting pose.' if is_sitting else 'Configure for standing pose.'}",
+            requirements=granular_requirements,
             estimated_time_minutes=self._estimate_time(
                 TaskType.CREATE_CHARACTER, analysis["estimated_complexity"]
             ),
             complexity=analysis["estimated_complexity"],
             priority=TaskPriority.HIGH,
             blender_categories=["mesh_operators", "object_operators"],
-            mesh_operations=["primitive_cube_add", "subdivide", "extrude_region", "loop_cut"],
-            object_count=1,
+            mesh_operations=specific_mesh_operations,
+            object_count=4,  # torso, head, 2 arms, 2 legs = 6, but simplified to 4 main parts
             context={
                 "character_type": entity_texts[0] if entity_texts else "person",
                 "descriptors": descriptors,
-                "actions": analysis.get("actions", [])
+                "actions": actions,
+                "pose_type": "sitting" if is_sitting else "standing",
+                "primitive_approach": True,
+                "specific_apis_needed": [
+                    "bpy.ops.mesh.primitive_cube_add",
+                    "bpy.ops.mesh.primitive_uv_sphere_add", 
+                    "bpy.ops.mesh.primitive_cylinder_add",
+                    "bpy.ops.transform.resize",
+                    "bpy.ops.transform.translate",
+                    "bpy.ops.transform.rotate"
+                ]
             }
         )
     
@@ -512,33 +548,67 @@ class PlannerAgent(BaseAgent):
         entity: Dict[str, Any], 
         analysis: Dict[str, Any]
     ) -> SubTask:
-        """Create subtask for furniture creation"""
+        """Create granular subtask for furniture creation with specific Blender operations"""
         
         furniture_type = entity["text"]
         descriptors = analysis.get("descriptors", [])
         
+        # Create granular, Blender-specific requirements for chair
+        if "chair" in furniture_type.lower():
+            granular_requirements = [
+                "add_cube_primitive_for_seat",
+                "scale_seat_to_chair_proportions",
+                "add_cube_primitive_for_backrest", 
+                "position_backrest_behind_seat",
+                "add_cylinder_primitives_for_legs",
+                "position_four_legs_under_seat"
+            ]
+            specific_mesh_operations = [
+                "mesh.primitive_cube_add",      # For seat and backrest
+                "mesh.primitive_cylinder_add",  # For legs
+                "transform.resize",             # For scaling parts
+                "transform.translate",          # For positioning
+                "object.duplicate"              # For creating multiple legs
+            ]
+        else:
+            # Generic furniture approach
+            granular_requirements = [
+                "add_cube_primitive_for_base",
+                "scale_base_to_furniture_proportions",
+                "add_additional_structural_elements"
+            ]
+            specific_mesh_operations = [
+                "mesh.primitive_cube_add",
+                "transform.resize", 
+                "transform.translate"
+            ]
+        
         return SubTask(
             task_id=f"task_{task_id:03d}",
             type=TaskType.CREATE_FURNITURE,
-            title=f"Create Furniture: {furniture_type}",
-            description=f"Create {furniture_type} with properties: {', '.join(descriptors)}",
-            requirements=[
-                "furniture_base_mesh",
-                "proper_proportions",
-                "structural_details"
-            ],
+            title=f"Add {furniture_type.title()} Using Mesh Primitives",
+            description=f"Create {furniture_type} using Blender mesh primitives. {'Add seat, backrest, and 4 legs using cubes and cylinders.' if 'chair' in furniture_type.lower() else f'Create {furniture_type} structure using basic shapes.'}",
+            requirements=granular_requirements,
             estimated_time_minutes=self._estimate_time(
                 TaskType.CREATE_FURNITURE, analysis["estimated_complexity"]
             ),
             complexity=analysis["estimated_complexity"],
             priority=TaskPriority.MEDIUM,
             blender_categories=["mesh_operators", "object_operators"],
-            mesh_operations=["primitive_cube_add", "scale", "extrude_region", "bevel"],
-            object_count=1,
+            mesh_operations=specific_mesh_operations,
+            object_count=5 if "chair" in furniture_type.lower() else 1,  # seat + backrest + 4 legs = 6, simplified to 5
             context={
                 "furniture_type": furniture_type,
                 "descriptors": descriptors,
-                "style": "realistic"
+                "style": "realistic",
+                "primitive_approach": True,
+                "specific_apis_needed": [
+                    "bpy.ops.mesh.primitive_cube_add",
+                    "bpy.ops.mesh.primitive_cylinder_add",
+                    "bpy.ops.transform.resize",
+                    "bpy.ops.transform.translate",
+                    "bpy.ops.object.duplicate"
+                ]
             }
         )
     

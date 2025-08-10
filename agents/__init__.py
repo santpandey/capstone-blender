@@ -6,6 +6,8 @@ Agents that work together to transform natural language into 3D assets
 from .base_agent import BaseAgent
 from .planner_agent import PlannerAgent
 from .coordinator_agent import CoordinatorAgent
+from .coder_agent import CoderAgent
+from .qa_agent import QAAgent
 from .models import (
     AgentType, AgentStatus, AgentResponse,
     PlannerInput, PlannerOutput, TaskPlan, SubTask, TaskType, TaskComplexity, TaskPriority,
@@ -18,6 +20,8 @@ __all__ = [
     'BaseAgent',
     'PlannerAgent',
     'CoordinatorAgent',
+    'CoderAgent',
+    'QAAgent',
     'AgentType', 'AgentStatus', 'AgentResponse',
     'PlannerInput', 'PlannerOutput', 'TaskPlan', 'SubTask', 'TaskType', 'TaskComplexity', 'TaskPriority',
     'CoordinatorInput', 'CoordinatorOutput', 'APIMapping',

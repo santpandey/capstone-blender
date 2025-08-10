@@ -150,23 +150,28 @@ class CoordinatorOutput(AgentResponse):
 
 class GeneratedScript(BaseModel):
     """Generated Python script for Blender"""
-    subtask_id: str = Field(..., description="ID of the subtask this script addresses")
-    script_content: str = Field(..., description="Python script content")
-    imports: List[str] = Field(default_factory=list, description="Required imports")
-    dependencies: List[str] = Field(default_factory=list, description="Script dependencies")
-    estimated_execution_time: float = Field(0.0, description="Estimated execution time in seconds")
-    validation_status: str = Field("not_validated", description="Script validation status")
+    script_id: str = Field(..., description="Unique identifier for the script")
+    plan_id: str = Field(..., description="ID of the plan this script implements")
+    python_code: str = Field(..., description="Complete Python script content")
+    api_calls_count: int = Field(0, description="Number of API calls in the script")
+    estimated_execution_time_seconds: float = Field(0.0, description="Estimated execution time in seconds")
+    dependencies: List[str] = Field(default_factory=list, description="Required dependencies")
+    created_objects_estimate: int = Field(0, description="Estimated number of objects to be created")
+    export_formats: List[str] = Field(default_factory=list, description="Supported export formats")
+    validation_passed: bool = Field(False, description="Whether the script passed validation")
+    validation_warnings: List[str] = Field(default_factory=list, description="Validation warnings")
 
 class CoderInput(BaseModel):
     """Input for the Coder Agent"""
+    plan: TaskPlan = Field(..., description="Original task plan")
     api_mappings: List[APIMapping] = Field(..., description="API mappings from Coordinator")
     execution_context: Dict[str, Any] = Field(default_factory=dict, description="Execution context")
     code_style_preferences: Dict[str, Any] = Field(default_factory=dict, description="Code generation preferences")
 
 class CoderOutput(AgentResponse):
     """Output from the Coder Agent"""
-    scripts: List[GeneratedScript] = Field(default_factory=list, description="Generated scripts")
-    execution_order: List[str] = Field(default_factory=list, description="Recommended script execution order")
+    generated_script: Optional[GeneratedScript] = Field(None, description="Generated Python script")
+    execution_metadata: Dict[str, Any] = Field(default_factory=dict, description="Execution metadata and recommendations")
     integration_notes: str = Field("", description="Notes on script integration")
 
 # ================= QA Agent Models =================
@@ -181,19 +186,27 @@ class ValidationIssue(BaseModel):
     affected_objects: List[str] = Field(default_factory=list, description="Objects affected by this issue")
     confidence: float = Field(0.0, description="Confidence in issue detection (0-1)")
 
+class ValidationResult(BaseModel):
+    """Result of asset validation by QA Agent"""
+    is_valid: bool = Field(..., description="Whether the asset passes validation")
+    confidence_score: float = Field(..., description="Confidence in validation result (0-1)")
+    issues_found: List[str] = Field(default_factory=list, description="List of issues identified")
+    suggestions: List[str] = Field(default_factory=list, description="Improvement suggestions")
+    quality_metrics: Dict[str, float] = Field(default_factory=dict, description="Quality assessment metrics")
+
 class QAInput(BaseModel):
     """Input for the QA Agent"""
-    generated_assets: List[str] = Field(..., description="Paths to generated 3D assets")
-    original_prompt: str = Field(..., description="Original user prompt for comparison")
-    execution_logs: List[str] = Field(default_factory=list, description="Execution logs from script running")
-    screenshots: List[str] = Field(default_factory=list, description="Screenshot paths for visual validation")
+    generated_script: GeneratedScript = Field(..., description="Generated script to validate")
+    original_plan: TaskPlan = Field(..., description="Original task plan for comparison")
+    execution_context: Dict[str, Any] = Field(default_factory=dict, description="Execution context")
+    asset_paths: List[str] = Field(default_factory=list, description="Paths to generated assets (optional)")
+    execution_logs: List[str] = Field(default_factory=list, description="Execution logs (optional)")
 
 class QAOutput(AgentResponse):
     """Output from the QA Agent"""
-    validation_score: float = Field(0.0, description="Overall validation score (0-1)")
-    issues: List[ValidationIssue] = Field(default_factory=list, description="Issues found during validation")
-    recommendations: List[str] = Field(default_factory=list, description="Recommendations for improvement")
-    approved_for_delivery: bool = Field(False, description="Whether asset is approved for delivery")
+    validation_result: ValidationResult = Field(..., description="Detailed validation results")
+    improvement_suggestions: List[str] = Field(default_factory=list, description="Specific improvement suggestions")
+    confidence_score: float = Field(0.0, description="Overall confidence in validation (0-1)")
 
 # ================= Pipeline Models =================
 
@@ -236,12 +249,4 @@ class PipelineExecution(BaseModel):
         self.total_execution_time = self.completed_at - self.started_at
         self.status = PipelineStatus.COMPLETED
 
-# ================= QA Agent Models =================
-
-class ValidationResult(BaseModel):
-    """Result of asset validation by QA Agent"""
-    is_valid: bool = Field(..., description="Whether the asset passes validation")
-    confidence_score: float = Field(..., description="Confidence in validation result (0-1)")
-    issues_found: List[str] = Field(default_factory=list, description="List of issues identified")
-    suggestions: List[str] = Field(default_factory=list, description="Improvement suggestions")
-    quality_metrics: Dict[str, float] = Field(default_factory=dict, description="Quality assessment metrics")
+# ================= QA Agent Models (ValidationResult defined above) =================
