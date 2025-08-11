@@ -15,13 +15,13 @@ from .models import (
     CoordinatorInput, CoordinatorOutput, APIMapping,
     TaskPlan, SubTask, TaskType
 )
+from .llm_api_mapper import LLMAPIMapper
 from .api_search import (
     OptimizedAPISearcher,
-    SearchContext,
     SearchConfig,
     create_search_context
 )
-from .api_search.models import APICategory
+from .api_search.models import SearchContext, APICategory
 
 class CoordinatorAgent(BaseAgent):
     """
@@ -51,6 +51,16 @@ class CoordinatorAgent(BaseAgent):
             max_concurrent_searches=5
         )
         self.api_searcher = OptimizedAPISearcher(search_config)
+        
+        # Initialize LLM-based API mapper
+        try:
+            self.llm_mapper = LLMAPIMapper()
+            self.use_llm_mapping = True
+            self.logger.info("LLM API Mapper initialized successfully")
+        except Exception as e:
+            self.logger.warning(f"LLM API Mapper initialization failed: {e}")
+            self.llm_mapper = None
+            self.use_llm_mapping = False
         
         # Task type to API category mapping
         self.task_category_mapping = {
@@ -262,7 +272,47 @@ class CoordinatorAgent(BaseAgent):
         subtask: SubTask, 
         execution_context: Dict[str, Any]
     ) -> APIMapping:
-        """Map a single subtask to specific Blender APIs"""
+        """Map a single subtask to specific Blender APIs using LLM or fallback to search"""
+        
+        # Try LLM-based mapping first (preferred approach)
+        if self.use_llm_mapping and self.llm_mapper:
+            try:
+                self.logger.info(f"Using LLM to map subtask: {subtask.title}")
+                
+                # Get LLM-generated API calls
+                llm_api_calls = await self.llm_mapper.map_subtask_to_apis(subtask)
+                
+                if llm_api_calls:
+                    # Convert LLM response to APIMapping format
+                    api_calls = []
+                    for call in llm_api_calls:
+                        api_calls.append({
+                            "api_name": call["api_name"],
+                            "parameters": call["parameters"],
+                            "description": call["description"],
+                            "execution_order": call.get("execution_order", len(api_calls) + 1)
+                        })
+                    
+                    # Create APIMapping object
+                    api_mapping = APIMapping(
+                        subtask_id=subtask.task_id,
+                        api_calls=api_calls,
+                        execution_strategy="sequential",
+                        estimated_execution_time=len(api_calls) * 2.0,  # 2 seconds per API call
+                        dependencies=[],
+                        resource_requirements={"memory_mb": 100, "cpu_cores": 1},
+                        mcp_server="blender_api_server"  # Add required mcp_server field
+                    )
+                    
+                    self.logger.info(f"LLM successfully mapped {len(api_calls)} API calls for subtask {subtask.task_id}")
+                    return api_mapping
+                    
+            except Exception as e:
+                self.logger.warning(f"LLM mapping failed for subtask {subtask.task_id}: {e}")
+                # Fall through to traditional search approach
+        
+        # Fallback to traditional search-based mapping
+        self.logger.info(f"Using traditional search for subtask: {subtask.title}")
         
         # Get preferred API categories for this task type
         preferred_categories = self.task_category_mapping.get(subtask.type, [APICategory.MESH_OPERATORS])
@@ -316,47 +366,87 @@ class CoordinatorAgent(BaseAgent):
         )
     
     def _generate_search_queries(self, subtask: SubTask) -> List[str]:
-        """Generate multiple search queries from a subtask"""
+        """Generate enhanced search queries from granular subtask information"""
+        
         queries = []
         
-        # Primary query: task title
+        # Priority 1: Extract specific mesh operations (highest priority for granular subtasks)
+        if hasattr(subtask, 'mesh_operations') and subtask.mesh_operations:
+            for operation in subtask.mesh_operations:
+                # Convert our format to Blender API format
+                if operation.startswith('mesh.'):
+                    queries.append(operation.replace('.', '.ops.'))  # mesh.primitive_cube_add → mesh.ops.primitive_cube_add
+                elif operation.startswith('transform.'):
+                    queries.append(operation.replace('.', '.ops.'))  # transform.resize → transform.ops.resize
+                else:
+                    queries.append(operation)
+        
+        # Priority 2: Extract specific APIs from context
+        if subtask.context and 'specific_apis_needed' in subtask.context:
+            api_list = subtask.context['specific_apis_needed']
+            for api in api_list:
+                # Extract the operation part: bpy.ops.mesh.primitive_cube_add → primitive_cube_add
+                if 'bpy.ops.' in api:
+                    operation = api.split('bpy.ops.')[-1]
+                    queries.append(operation)
+                else:
+                    queries.append(api)
+        
+        # Priority 3: Enhanced title-based queries
         if subtask.title:
-            queries.append(subtask.title.replace("Create ", "").replace(":", ""))
+            title_lower = subtask.title.lower()
+            # Extract key operations from title
+            if "mesh primitives" in title_lower:
+                queries.extend(["primitive_cube_add", "primitive_cylinder_add", "primitive_uv_sphere_add"])
+            if "chair" in title_lower:
+                queries.extend(["primitive_cube_add", "primitive_cylinder_add", "duplicate"])
+            if "human" in title_lower or "character" in title_lower:
+                queries.extend(["primitive_cube_add", "primitive_uv_sphere_add", "primitive_cylinder_add"])
         
-        # Secondary query: description keywords
+        # Priority 4: Enhanced description-based queries  
         if subtask.description:
-            # Extract meaningful keywords from description
-            desc_words = subtask.description.lower().split()
-            meaningful_words = [word for word in desc_words if len(word) > 3 and word not in {
-                "with", "that", "this", "will", "from", "into", "using", "based", "need"
-            }]
-            if meaningful_words:
-                queries.append(" ".join(meaningful_words[:4]))
+            desc_lower = subtask.description.lower()
+            # Extract Blender-specific keywords
+            blender_keywords = []
+            if "cube" in desc_lower:
+                blender_keywords.append("primitive_cube_add")
+            if "sphere" in desc_lower:
+                blender_keywords.append("primitive_uv_sphere_add")
+            if "cylinder" in desc_lower:
+                blender_keywords.append("primitive_cylinder_add")
+            if "scale" in desc_lower or "resize" in desc_lower:
+                blender_keywords.append("resize")
+            if "position" in desc_lower or "translate" in desc_lower:
+                blender_keywords.append("translate")
+            if "rotate" in desc_lower:
+                blender_keywords.append("rotate")
+            
+            queries.extend(blender_keywords)
         
-        # Task-specific queries based on type
-        task_specific_queries = {
-            TaskType.CREATE_CHARACTER: ["character mesh", "human model", "figure creation"],
-            TaskType.CREATE_FURNITURE: ["furniture mesh", "object modeling", "primitive shapes"],
-            TaskType.CREATE_CLOTHING: ["cloth simulation", "garment modeling", "fabric"],
-            TaskType.LIGHTING_SETUP: ["light add", "illumination", "lamp"],
-            TaskType.MATERIAL_APPLICATION: ["material", "shader", "texture"],
-            TaskType.SCENE_COMPOSITION: ["transform", "position", "arrange"],
-            TaskType.ANIMATION_SETUP: ["keyframe", "animate", "motion"]
+        # Priority 5: Task-specific fallback queries (enhanced)
+        enhanced_task_queries = {
+            TaskType.CREATE_CHARACTER: ["primitive_cube_add", "primitive_uv_sphere_add", "primitive_cylinder_add"],
+            TaskType.CREATE_FURNITURE: ["primitive_cube_add", "primitive_cylinder_add", "duplicate"],
+            TaskType.CREATE_CLOTHING: ["cloth", "modifier_add"],
+            TaskType.LIGHTING_SETUP: ["light_add", "sun_add", "area_add"],
+            TaskType.MATERIAL_APPLICATION: ["material_new", "node_add"],
+            TaskType.SCENE_COMPOSITION: ["transform", "translate", "rotate"],
+            TaskType.ANIMATION_SETUP: ["keyframe_insert", "frame_set"]
         }
         
-        if subtask.type in task_specific_queries:
-            queries.extend(task_specific_queries[subtask.type])
+        if subtask.type in enhanced_task_queries:
+            queries.extend(enhanced_task_queries[subtask.type])
         
-        # Context-based queries
-        if subtask.context:
-            for key, value in subtask.context.items():
-                if isinstance(value, str) and len(value) > 2:
-                    queries.append(value)
-                elif isinstance(value, list):
-                    queries.extend([str(v) for v in value if len(str(v)) > 2])
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_queries = []
+        for query in queries:
+            if query not in seen:
+                seen.add(query)
+                unique_queries.append(query)
         
-        # Limit to top 5 queries to avoid overwhelming the search
-        return queries[:5]
+        # Limit to top 8 queries (increased from 5 for better coverage)
+        return unique_queries[:8]
     
     def _deduplicate_and_rank_apis(self, api_results) -> List:
         """Remove duplicates and rank APIs by relevance"""

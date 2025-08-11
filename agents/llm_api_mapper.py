@@ -3,11 +3,11 @@ LLM-based API Mapper for Blender Operations
 Inspired by EAG-V17's model_manager.py approach
 """
 
-import os
-import json
 import asyncio
-from typing import List, Dict, Any, Optional
+import json
+import logging
 from pathlib import Path
+from typing import Dict, List, Optional, Any
 import google.generativeai as genai
 from dotenv import load_dotenv
 
@@ -101,60 +101,104 @@ class LLMAPIMapper:
         except Exception as e:
             raise RuntimeError(f"Gemini generation failed: {str(e)}")
     
-    def _parse_api_response(self, response: str) -> List[Dict[str, Any]]:
-        """Parse LLM response into structured API calls"""
+    def _clean_json_response(self, response: str) -> str:
+        """Comprehensive JSON cleaning for LLM responses - PROVEN SOLUTION"""
+        import re
+        
+        # Step 1: Remove markdown code blocks
+        response = response.strip()
+        response = re.sub(r'^```json\s*', '', response, flags=re.MULTILINE)
+        response = re.sub(r'^```\s*', '', response, flags=re.MULTILINE) 
+        response = re.sub(r'```$', '', response, flags=re.MULTILINE)
+        
+        # Step 2: Extract JSON object
+        json_match = re.search(r'\{.*\}', response, re.DOTALL)
+        if json_match:
+            response = json_match.group(0)
+        
+        # Step 3: Fix array syntax (0, 0, 0) -> [0, 0, 0]
+        response = re.sub(r'\((\s*[-\d\.\s,]+\s*)\)', r'[\1]', response)
+        
+        # Step 4: Fix single quotes 'WORLD' -> "WORLD"
+        response = re.sub(r"'([^']*)'", r'"\1"', response)
+        
+        # Step 5: Remove invalid parameter references
+        response = re.sub(r'"material":\s*bpy\.data\.materials\[[^\]]+\]', '"material": "WhiteMaterial"', response)
+        
+        # Step 6: Convert Python literals
+        response = response.replace('None', 'null')
+        response = response.replace('True', 'true')
+        response = response.replace('False', 'false')
+        
+        # Step 7: Remove trailing commas
+        response = re.sub(r',(\s*[}\]])', r'\1', response)
+        
+        # Step 8: Handle smart quotes
+        response = response.replace('"', '"').replace('"', '"')
+        response = response.replace(''', "'").replace(''', "'")
+        
+        return response.strip()
+
+    def _parse_llm_response(self, response: str) -> List[Dict[str, Any]]:
+        """Parse LLM response and extract API calls"""
+        
         try:
-            # Clean up common JSON formatting issues
-            response = response.replace("'", '"')  # Replace single quotes with double quotes
-            response = response.replace('True', 'true').replace('False', 'false')  # Python to JSON booleans
-            response = response.replace('None', 'null')  # Python None to JSON null
+            # Clean the response first
+            cleaned_response = self._clean_json_response(response)
             
-            # Fix smart quotes (common LLM output issue)
-            response = response.replace('"', '"').replace('"', '"')  # Replace smart quotes with regular quotes
-            response = response.replace(''', "'").replace(''', "'")  # Replace smart single quotes
-            
-            # Remove trailing commas before closing brackets/braces
-            import re
-            response = re.sub(r',(\s*[}\]])', r'\1', response)
-            
-            # Extract JSON from response (handle markdown code blocks)
-            response = response.strip()
-            if response.startswith("```json"):
-                response = response[7:]  # Remove ```json
-            if response.endswith("```"):
-                response = response[:-3]  # Remove ```
-            
-            # Parse JSON
-            parsed_response = json.loads(response)
-            
-            # Handle both formats: direct array or wrapped in "api_calls"
-            if isinstance(parsed_response, dict) and "api_calls" in parsed_response:
-                api_calls = parsed_response["api_calls"]
-            elif isinstance(parsed_response, list):
-                api_calls = parsed_response
+            # Try to parse as JSON
+            if cleaned_response.startswith('{') and '"api_calls"' in cleaned_response:
+                # Response is wrapped in an object
+                data = json.loads(cleaned_response)
+                api_calls = data.get("api_calls", [])
+            elif cleaned_response.startswith('['):
+                # Response is a direct array
+                api_calls = json.loads(cleaned_response)
             else:
-                raise ValueError("Response must be a JSON array or object with 'api_calls' field")
+                raise ValueError("Response doesn't start with { or [")
             
-            # Validate structure
             if not isinstance(api_calls, list):
                 raise ValueError("API calls must be a JSON array")
             
-            validated_calls = []
-            for call in api_calls:
-                if isinstance(call, dict) and "api_name" in call:
-                    validated_calls.append({
-                        "api_name": call.get("api_name", ""),
-                        "parameters": call.get("parameters", {}),
-                        "description": call.get("description", ""),
-                        "execution_order": call.get("execution_order", len(validated_calls) + 1)
-                    })
-            
-            return validated_calls
+            return self._validate_api_calls(api_calls)
             
         except (json.JSONDecodeError, ValueError) as e:
-            print(f"Failed to parse LLM response: {e}")
-            print(f"Response was: {response}")
+            print(f"❌ Failed to parse LLM response: {e}")
+            print(f"📝 Raw LLM Response (first 500 chars): {response[:500]}...")
+            print(f"📝 Response length: {len(response)} characters")
+            
+            # Save full response to file for debugging
+            debug_file = Path("debug_llm_full_response.json")
+            debug_file.write_text(response, encoding='utf-8')
+            print(f"💾 Full LLM response saved to: {debug_file}")
+            
+            # Try to extract JSON using regex as fallback
+            import re
+            json_match = re.search(r'\[.*\]', response, re.DOTALL)
+            if json_match:
+                try:
+                    json_str = json_match.group(0)
+                    print(f"🔧 Attempting regex extraction: {json_str[:200]}...")
+                    api_calls = json.loads(json_str)
+                    print(f"✅ Regex extraction successful! Found {len(api_calls)} API calls")
+                    return self._validate_api_calls(api_calls)
+                except Exception as regex_e:
+                    print(f"❌ Regex extraction also failed: {regex_e}")
+            
             return []
+    
+    def _validate_api_calls(self, api_calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Validate and clean API calls structure"""
+        validated_calls = []
+        for call in api_calls:
+            if isinstance(call, dict) and "api_name" in call:
+                validated_calls.append({
+                    "api_name": call.get("api_name", ""),
+                    "parameters": call.get("parameters", {}),
+                    "description": call.get("description", ""),
+                    "execution_order": call.get("execution_order", len(validated_calls) + 1)
+                })
+        return validated_calls
     
     def _fallback_mapping(self, subtask: SubTask) -> List[Dict[str, Any]]:
         """Fallback mapping when LLM fails"""

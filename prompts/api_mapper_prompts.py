@@ -120,34 +120,86 @@ Convert a single granular subtask into a **precise sequence of Blender API calls
 
 ---
 
-## ✅ OUTPUT FORMAT
+## ✅ CRITICAL OUTPUT FORMAT REQUIREMENTS
 
-You must respond with EXACTLY this JSON structure (no markdown, no additional text):
+**🚨 ABSOLUTELY MANDATORY JSON SCHEMA COMPLIANCE 🚨**
 
-```json
+You MUST respond with EXACTLY this JSON structure. Any deviation will cause system failure.
+
+### CRITICAL: NO MARKDOWN BLOCKS
+❌ NEVER use ```json``` or ``` blocks
+❌ NEVER add explanatory text before or after JSON
+✅ Start your response directly with { and end with }
+
+### JSON Schema Requirements:
+1. **VALID JSON ONLY**: No markdown blocks, no ```json```, no additional text
+2. **EXACT STRUCTURE**: Must match the schema below precisely
+3. **PROPER SYNTAX**: All strings in double quotes, no trailing commas, proper nesting
+4. **REQUIRED FIELDS**: Every field marked as required must be present
+5. **CORRECT DATA TYPES**: Numbers as numbers, strings as strings, arrays as arrays
+
+### Required JSON Schema:
+```
 {
-  "api_calls": [
+  "api_calls": [                    // REQUIRED: Array of API call objects
     {
-      "api_name": "bpy.ops.mesh.primitive_cube_add",
-      "parameters": {
-        "size": 2.0,
-        "location": [0, 0, 1]
-      },
-      "description": "Add cube primitive for character torso",
-      "execution_order": 1
-    },
-    {
-      "api_name": "bpy.ops.mesh.primitive_uv_sphere_add",
-      "parameters": {
-        "radius": 0.5,
-        "location": [0, 0, 2.5]
-      },
-      "description": "Add sphere primitive for character head",
-      "execution_order": 2
+      "api_name": "string",         // REQUIRED: Exact Blender API function name
+      "parameters": {},             // REQUIRED: Object with API parameters (can be empty {})
+      "description": "string",      // REQUIRED: Brief description of what this call does
+      "execution_order": number     // REQUIRED: Integer starting from 1
     }
   ]
 }
 ```
+
+### JSON Validation Rules:
+- ✅ Use double quotes for all strings: "api_name" not 'api_name'
+- ✅ No trailing commas: {"a": 1, "b": 2} not {"a": 1, "b": 2,}
+- ✅ CRITICAL: Arrays use [brackets]: [0, 0, 1] NEVER (0, 0, 1)
+- ✅ Numbers without quotes: "execution_order": 1 not "execution_order": "1"
+- ✅ Boolean values: true/false not True/False
+- ✅ Null values: null not None
+- ✅ Location/rotation parameters: "location": [0, 0, 0] not "location": (0, 0, 0)
+- ✅ Color values: [1, 1, 1, 1] not (1, 1, 1, 1)
+
+### Example Valid Response (COPY THIS EXACT FORMAT):
+{
+  "api_calls": [
+    {
+      "api_name": "bpy.ops.mesh.primitive_cylinder_add",
+      "parameters": {
+        "radius": 0.5,
+        "depth": 1.0,
+        "location": [0, 0, 0],
+        "rotation": [0, 0, 0],
+        "enter_editmode": false
+      },
+      "description": "Create cylinder for coffee mug body",
+      "execution_order": 1
+    },
+    {
+      "api_name": "bpy.ops.material.new",
+      "parameters": {
+        "name": "WhiteMaterial"
+      },
+      "description": "Create white material for mug",
+      "execution_order": 2
+    }
+  ]
+}
+
+**⚠️ CRITICAL**: Your response must be ONLY the JSON object above. No explanations, no markdown, no additional text.
+
+### JSON Validation Checklist (VERIFY BEFORE RESPONDING):
+□ Response starts with { and ends with }
+□ All strings use double quotes "like this"
+□ No trailing commas anywhere
+□ Arrays use [brackets] not (parentheses)
+□ Numbers are unquoted: 1 not "1"
+□ Booleans are lowercase: true/false
+□ All required fields present
+□ Proper nesting and indentation
+□ Valid JSON syntax throughout
 
 ### Required Fields for Each API Call:
 - **api_name**: Exact Blender API method name (string)
