@@ -75,9 +75,9 @@ Convert a single granular subtask into a **precise sequence of Blender API calls
 - `bpy.ops.object.light_add(type='SUN', location=(x, y, z))`
 - `bpy.ops.object.light_add(type='POINT', location=(x, y, z))`
 
-**Materials:**
-- `bpy.ops.material.new()`
-- `bpy.ops.object.material_slot_add()`
+**Object Selection and Management:**
+- `bpy.ops.object.select_all(action='SELECT')`
+- `bpy.ops.object.delete(use_global=False)`
 
 **Scene/Context:**
 - `bpy.context.scene.render.engine = 'CYCLES'`
@@ -92,6 +92,28 @@ Convert a single granular subtask into a **precise sequence of Blender API calls
 3. **Proper Sequencing**: Order API calls logically (create → position → scale → material)
 4. **Context Awareness**: Consider the overall scene and task requirements
 5. **Realistic Values**: Use appropriate sizes, positions, and rotations for the task
+
+## 🚨 CRITICAL SAFETY CONSTRAINTS - NEVER VIOLATE THESE
+
+**FORBIDDEN OPERATIONS (WILL CRASH BLENDER):**
+- ❌ `bpy.ops.view3d.view_selected` - Viewport navigation
+- ❌ `bpy.ops.view3d.view_all` - Viewport navigation  
+- ❌ `bpy.ops.view3d.view_center_cursor` - Viewport navigation
+- ❌ `bpy.ops.view3d.view_camera` - Viewport navigation
+- ❌ `bpy.context.screen.*` - UI screen manipulation
+- ❌ `bpy.context.area.*` - UI area manipulation
+- ❌ `bpy.context.space_data.*` - Viewport space manipulation
+- ❌ `bpy.ops.screen.*` - Screen operations
+- ❌ `bpy.ops.wm.window*` - Window management
+- ❌ Any viewport shading changes (`space.shading.type`)
+
+**FOCUS ONLY ON 3D ASSET CREATION:**
+- ✅ Mesh creation (`bpy.ops.mesh.primitive_*`)
+- ✅ Object transformations (`bpy.ops.transform.*`)
+- ✅ Material creation and assignment
+- ✅ Lighting setup (`bpy.ops.object.light_add`)
+- ✅ Scene object management
+- ✅ Export operations (`bpy.ops.export_scene.*`)
 
 ---
 
@@ -147,6 +169,12 @@ You MUST respond with EXACTLY this JSON structure. Any deviation will cause syst
       "parameters": {},             // REQUIRED: Object with API parameters (can be empty {})
       "description": "string",      // REQUIRED: Brief description of what this call does
       "execution_order": number     // REQUIRED: Integer starting from 1
+    },
+    {
+      "api_name": "bpy.ops.material.new",         // REQUIRED: Exact Blender API function name
+      "parameters": {},             // REQUIRED: Object with API parameters (can be empty {})
+      "description": "Create new material",      // REQUIRED: Brief description of what this call does
+      "execution_order": number     // REQUIRED: Integer starting from 1
     }
   ]
 }
@@ -178,17 +206,51 @@ You MUST respond with EXACTLY this JSON structure. Any deviation will cause syst
       "execution_order": 1
     },
     {
-      "api_name": "bpy.ops.material.new",
+      "api_name": "bpy.ops.transform.resize",
       "parameters": {
-        "name": "WhiteMaterial"
+        "value": [1.2, 1.2, 0.8]
       },
-      "description": "Create white material for mug",
+      "description": "Scale cylinder to mug proportions",
       "execution_order": 2
+    },
+    {
+      "api_name": "bpy.ops.object.select_all",
+      "parameters": {
+        "action": "SELECT"
+      },
+      "description": "Select all objects for material application",
+      "execution_order": 3
     }
   ]
 }
 
 **⚠️ CRITICAL**: Your response must be ONLY the JSON object above. No explanations, no markdown, no additional text.
+
+### ADDITIONAL VALID API EXAMPLES (USE THESE PATTERNS):
+
+**Mesh Creation (ALWAYS VALID):**
+- `bpy.ops.mesh.primitive_cube_add`
+- `bpy.ops.mesh.primitive_uv_sphere_add`
+- `bpy.ops.mesh.primitive_cylinder_add`
+- `bpy.ops.mesh.primitive_cone_add`
+- `bpy.ops.mesh.primitive_torus_add`
+
+**Transformations (ALWAYS VALID):**
+- `bpy.ops.transform.translate`
+- `bpy.ops.transform.rotate`
+- `bpy.ops.transform.resize`
+
+**Object Operations (ALWAYS VALID):**
+- `bpy.ops.object.select_all`
+- `bpy.ops.object.duplicate_move`
+- `bpy.ops.object.join`
+
+🚨🚨🚨 ABSOLUTELY FORBIDDEN - WILL CAUSE SYSTEM FAILURE 🚨🚨🚨
+❌❌❌ `bpy.ops.material.new` - THIS API DOES NOT EXIST IN BLENDER
+❌❌❌ `bpy.ops.view3d.*` - THESE OPERATIONS CRASH BLENDER  
+❌❌❌ `bpy.data.materials[...]` - THESE ARE NOT EXECUTABLE API CALLS
+❌❌❌ `bpy.context.screen.*` - UI MANIPULATION FORBIDDEN
+🚨🚨🚨 USE ONLY THE VALID APIS LISTED ABOVE 🚨🚨🚨
 
 ### JSON Validation Checklist (VERIFY BEFORE RESPONDING):
 □ Response starts with { and ends with }
@@ -196,6 +258,7 @@ You MUST respond with EXACTLY this JSON structure. Any deviation will cause syst
 □ No trailing commas anywhere
 □ Arrays use [brackets] not (parentheses)
 □ Numbers are unquoted: 1 not "1"
+□ Only use APIs from VALID examples above
 □ Booleans are lowercase: true/false
 □ All required fields present
 □ Proper nesting and indentation

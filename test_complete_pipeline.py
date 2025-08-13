@@ -14,13 +14,53 @@ from agents import (
     AgentStatus
 )
 
-async def test_complete_pipeline():
-    """Test the complete multi-agent pipeline end-to-end"""
-    print("🚀 Starting Complete Multi-Agent Pipeline Test")
+def get_user_prompt():
+    """Get user prompt interactively"""
+    print("🎨 **Dynamic 3D Asset Generation Pipeline**")
     print("="*80)
+    print("Enter your 3D asset description below:")
+    print("Examples:")
+    print("  • Create a white coffee mug with 'Coffee' text in brown")
+    print("  • Design a wooden chair with red cushions")
+    print("  • Make a blue car with chrome wheels")
+    print("  • Build a house with a red roof and white walls")
+    print("-"*80)
     
-    # Test prompt
-    test_prompt = "Create an old man sitting on a wooden chair in his room with lighting at 30 degrees from his head"
+    while True:
+        user_prompt = input("\n🎯 Your prompt: ").strip()
+        
+        if not user_prompt:
+            print("❌ Please enter a valid prompt!")
+            continue
+            
+        if user_prompt.lower() in ['quit', 'exit', 'q']:
+            print("👋 Goodbye!")
+            return None
+            
+        # Confirm prompt
+        print(f"\n📝 You entered: '{user_prompt}'")
+        confirm = input("✅ Proceed with this prompt? (y/n/edit): ").strip().lower()
+        
+        if confirm in ['y', 'yes']:
+            return user_prompt
+        elif confirm in ['n', 'no']:
+            print("🔄 Let's try again...")
+            continue
+        elif confirm in ['e', 'edit']:
+            continue
+        else:
+            print("❌ Please enter 'y', 'n', or 'edit'")
+
+async def test_complete_pipeline():
+    """Interactive multi-agent pipeline for 3D asset generation"""
+    # Get user prompt interactively
+    user_prompt = get_user_prompt()
+    
+    if not user_prompt:
+        return  # User chose to quit
+    
+    print(f"\n🚀 Starting Pipeline for: '{user_prompt}'")
+    print("="*80)
     
     try:
         # Step 1: Initialize all agents
@@ -43,11 +83,9 @@ async def test_complete_pipeline():
             return False
         
         # Step 2: Planner Agent - Decompose prompt
-        print(f"\n🧠 **Step 2: Planner Agent - Decomposing Prompt**")
-        print(f"   Input: '{test_prompt}'")
-        
+        print("\n🧠 **Step 2: Planner Agent - Decomposing Prompt**")
         planner_input = PlannerInput(
-            prompt=test_prompt,
+            prompt=user_prompt,
             style_preferences={"quality": "high", "style": "realistic"}
         )
         
@@ -63,6 +101,12 @@ async def test_complete_pipeline():
             return False
         
         plan = planner_result.plan
+        
+        # DEBUG: Check plan summary and other fields
+        print(f"   🔍 DEBUG: plan.summary = '{plan.summary}'")
+        print(f"   🔍 DEBUG: plan.plan_id = '{plan.plan_id}'")
+        print(f"   🔍 DEBUG: plan.original_prompt = '{plan.original_prompt}'")
+        
         print(f"   ✅ Generated {len(plan.subtasks)} subtasks")
         for i, subtask in enumerate(plan.subtasks[:3]):  # Show first 3
             print(f"      {i+1}. {subtask.title} ({subtask.type.value})")
@@ -93,10 +137,17 @@ async def test_complete_pipeline():
         
         api_mappings = coordinator_result.api_mappings
         total_apis = sum(len(mapping.api_calls) for mapping in api_mappings)
-        avg_confidence = sum(mapping.confidence_score for mapping in api_mappings) / len(api_mappings)
         
-        print(f"   ✅ Mapped {len(api_mappings)} subtasks to {total_apis} API calls")
-        print(f"   Average confidence: {avg_confidence:.3f}")
+        # Guard against division by zero
+        if len(api_mappings) > 0:
+            avg_confidence = sum(mapping.confidence_score for mapping in api_mappings) / len(api_mappings)
+            print(f"   ✅ Mapped {len(api_mappings)} subtasks to {total_apis} API calls")
+            print(f"   Average confidence: {avg_confidence:.3f}")
+        else:
+            print(f"   ⚠️ No API mappings generated - coordinator failed to map subtasks")
+            print(f"   This indicates an issue with the Coordinator Agent's API mapping process")
+            avg_confidence = 0.0
+        
         print(f"   Execution strategy: {coordinator_result.execution_strategy}")
         
         # Step 4: Coder Agent - Generate Python script
@@ -208,41 +259,71 @@ async def test_agent_health_checks():
     # Initialize coordinator
     await agents["Coordinator"].initialize()
     
+    all_healthy = True
+    
     for name, agent in agents.items():
         try:
             health = await agent.health_check()
             print(f"\n🔍 **{name} Agent Health**:")
-            for key, value in health.items():
-                status = "✅" if value else "❌" if isinstance(value, bool) else "📊"
-                print(f"   {status} {key}: {value}")
+            
+            if isinstance(health, bool):
+                # Simple boolean health check
+                status = "✅" if health else "❌"
+                print(f"   {status} healthy: {health}")
+                if not health:
+                    all_healthy = False
+            elif isinstance(health, dict):
+                # Detailed health check with metrics
+                for key, value in health.items():
+                    status = "✅" if value else "❌" if isinstance(value, bool) else "📊"
+                    print(f"   {status} {key}: {value}")
+                    if isinstance(value, bool) and not value:
+                        all_healthy = False
+            else:
+                print(f"   📊 health_status: {health}")
+                
         except Exception as e:
             print(f"   ❌ Health check failed: {e}")
+            all_healthy = False
+    
+    return all_healthy
 
 async def main():
-    """Run complete pipeline tests"""
-    
-    # Test 1: Complete pipeline
-    pipeline_success = await test_complete_pipeline()
-    
-    # Test 2: Health checks
-    await test_agent_health_checks()
-    
-    # Final results
-    print("\n" + "="*80)
-    print("🎉 **FINAL RESULTS**")
+    """Main function to run interactive pipeline"""
+    print("🎨 **Interactive 3D Asset Generation Pipeline**")
     print("="*80)
+    print("Welcome to the Dynamic Multi-Agent 3D Asset Generator!")
+    print("This pipeline uses AI agents to create Blender Python scripts from your descriptions.")
+    print()
     
-    if pipeline_success:
-        print("✅ **SUCCESS**: Complete multi-agent pipeline is working!")
-        print("🚀 **Ready for production deployment!**")
-        print("\n📋 **Next Steps**:")
-        print("   1. Deploy MCP servers for Blender API categories")
-        print("   2. Set up headless Blender execution environment")
-        print("   3. Implement frontend with Three.js for asset rendering")
-        print("   4. Add multimodal QA validation with computer vision")
-    else:
-        print("❌ **FAILED**: Pipeline has issues that need to be addressed")
-        print("🔧 **Check the validation results above for improvement suggestions**")
+    # Test health checks first
+    print("🔧 Checking agent health...")
+    health_ok = await test_agent_health_checks()
+    
+    if not health_ok:
+        print("❌ Agent health check failed. Please fix issues before continuing.")
+        return False
+    
+    print("✅ All agents are healthy!")
+    print()
+    
+    # Interactive loop
+    while True:
+        print("\n" + "="*80)
+        success = await test_complete_pipeline()
+        
+        if success is None:  # User chose to quit
+            break
+            
+        # Ask if user wants to continue
+        print("\n" + "="*80)
+        continue_choice = input("🔄 Generate another asset? (y/n): ").strip().lower()
+        
+        if continue_choice not in ['y', 'yes']:
+            print("👋 Thank you for using the 3D Asset Generation Pipeline!")
+            break
+    
+    return True
 
 if __name__ == "__main__":
     asyncio.run(main())
