@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .base_agent import BaseAgent
+from .simple_validator import SimpleAPIValidator
 from .models import (
     AgentType, AgentStatus, AgentResponse,
     CoderInput, CoderOutput, GeneratedScript,
@@ -31,12 +32,14 @@ class CoderAgent(BaseAgent):
     6. Add logging and debugging support
     """
     
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self):
         super().__init__(
             agent_type=AgentType.CODER,
-            name="coder_agent",
-            config=config or {}
+            name="Coder Agent"
         )
+        
+        # Initialize API validator for crash prevention
+        self.api_validator = SimpleAPIValidator()
         
         # Code generation templates
         self.script_templates = {
@@ -600,9 +603,36 @@ if bpy.context.mode != 'OBJECT':
                 return False'''
             else:
                 # Add regular API calls for non-material subtasks
+                # But ensure we always create visible objects
+                has_object_creation = any("primitive" in api_call.get("api_name", "") for api_call in mapping.api_calls)
+                
+                if not has_object_creation:
+                    # If no object creation APIs, add a default visible object
+                    object_type = self._extract_object_type_from_text(subtask.title + " " + subtask.description)
+                    method_code += f'''
+            
+            # Create visible object for {subtask.title}
+            success = self.safe_execute_api(
+                "bpy.ops.mesh.{object_type}",
+                {{"radius": 2.0, "location": [0, 0, 0]}}
+            )
+            
+            if not success:
+                self.log_error(f"Failed to create object")
+                return False
+            
+            # Track the created object
+            if bpy.context.active_object:
+                self.add_created_object(bpy.context.active_object.name, "generated_object")'''
+                
                 for i, api_call in enumerate(mapping.api_calls):
                     api_name = api_call["api_name"]
                     parameters = api_call["parameters"]
+                    
+                    # Ensure size parameters are reasonable for visibility
+                    if "radius" in parameters and isinstance(parameters["radius"], (int, float)):
+                        if parameters["radius"] < 1.0:
+                            parameters["radius"] = 2.0  # Make objects visible
                     
                     # Clean parameters for code generation
                     clean_params = self._clean_parameters_for_code(parameters)

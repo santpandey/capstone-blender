@@ -6,8 +6,12 @@ First agent in the multi-agent pipeline for 3D asset generation
 import re
 import uuid
 import asyncio
+import json
+import os
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
+from dotenv import load_dotenv
+import google.generativeai as genai
 
 from .base_agent import BaseAgent
 from .models import (
@@ -28,12 +32,21 @@ class PlannerAgent(BaseAgent):
     5. Estimate complexity and time requirements
     """
     
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self):
         super().__init__(
             agent_type=AgentType.PLANNER,
-            name="planner_agent",
-            config=config or {}
+            name="Planner Agent"
         )
+        
+        # Load environment variables and initialize LLM
+        load_dotenv()
+        api_key = os.getenv("GEMINI_API_KEY")
+        if api_key:
+            genai.configure(api_key=api_key)
+            self.llm_available = True
+        else:
+            self.llm_available = False
+            self.logger.warning("GEMINI_API_KEY not found, falling back to rule-based parsing")
         
         # Initialize planning knowledge base
         self._init_planning_knowledge()
@@ -170,6 +183,23 @@ class PlannerAgent(BaseAgent):
             TaskComplexity.EXPERT: 4.0
         }
     
+    async def plan(self, prompt: str) -> 'TaskPlan':
+        """Simple interface to generate a plan from a prompt string"""
+        from .models import PlannerInput
+        
+        input_data = PlannerInput(
+            agent_type=AgentType.PLANNER,
+            prompt=prompt,
+            user_id="test_user",
+            session_id="test_session"
+        )
+        
+        result = await self.process(input_data)
+        if result.success and result.plan:
+            return result.plan
+        else:
+            raise Exception(f"Planning failed: {result.message}")
+    
     async def process(self, input_data: PlannerInput) -> PlannerOutput:
         """Process the planning request and generate structured subtasks"""
         
@@ -226,7 +256,93 @@ class PlannerAgent(BaseAgent):
             )
     
     def _analyze_prompt(self, prompt: str) -> Dict[str, Any]:
-        """Analyze the prompt to understand intent and requirements"""
+        """Analyze the prompt to understand intent and requirements using LLM or fallback"""
+        
+        if self.llm_available:
+            return self._analyze_prompt_with_llm(prompt)
+        else:
+            return self._analyze_prompt_fallback(prompt)
+    
+    def _analyze_prompt_with_llm(self, prompt: str) -> Dict[str, Any]:
+        """Use LLM to analyze natural language prompt"""
+        
+        analysis_prompt = f"""
+        Analyze this 3D modeling prompt and extract structured information:
+        
+        Prompt: "{prompt}"
+        
+        Please provide a JSON response with:
+        {{
+            "objects": ["list of objects to create"],
+            "materials": ["list of materials/colors mentioned"],
+            "actions": ["list of actions/verbs"],
+            "descriptors": ["list of adjectives/descriptors"],
+            "text_elements": ["any text/labels to add"],
+            "complexity": "SIMPLE|MODERATE|COMPLEX|EXPERT",
+            "primary_intent": "brief description of main goal"
+        }}
+        
+        Focus on identifying:
+        - Physical objects (mug, chair, house, etc.)
+        - Colors and materials (white, brown, metal, wood)
+        - Text or labels to be added
+        - Overall complexity level
+        """
+        
+        try:
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            response = model.generate_content(analysis_prompt)
+            
+            # Parse JSON response with robust error handling
+            response_text = response.text.strip()
+            
+            # Remove code block markers
+            if response_text.startswith('```json'):
+                response_text = response_text[7:].strip()
+                if response_text.endswith('```'):
+                    response_text = response_text[:-3].strip()
+            elif response_text.startswith('```'):
+                response_text = response_text[3:].strip()
+                if response_text.endswith('```'):
+                    response_text = response_text[:-3].strip()
+            
+            # Find JSON content if wrapped in other text
+            json_start = response_text.find('{')
+            json_end = response_text.rfind('}') + 1
+            if json_start >= 0 and json_end > json_start:
+                response_text = response_text[json_start:json_end]
+            
+            llm_analysis = json.loads(response_text)
+            
+            # Validate required fields
+            required_fields = ['objects', 'materials', 'actions', 'descriptors', 'text_elements', 'complexity', 'primary_intent']
+            for field in required_fields:
+                if field not in llm_analysis:
+                    llm_analysis[field] = [] if field != 'complexity' and field != 'primary_intent' else ('MODERATE' if field == 'complexity' else 'create_3d_asset')
+            
+            # Convert to expected format
+            analysis = {
+                "original_prompt": prompt,
+                "word_count": len(prompt.split()),
+                "entities": llm_analysis.get("objects", []),
+                "actions": llm_analysis.get("actions", []),
+                "descriptors": llm_analysis.get("descriptors", []),
+                "materials": llm_analysis.get("materials", []),
+                "text_elements": llm_analysis.get("text_elements", []),
+                "spatial_relationships": [],
+                "estimated_complexity": getattr(TaskComplexity, llm_analysis.get("complexity", "MODERATE")),
+                "primary_intent": llm_analysis.get("primary_intent", "create_3d_asset")
+            }
+            
+            self.logger.info(f"LLM analysis successful: found {len(analysis['entities'])} objects")
+            return analysis
+            
+        except Exception as e:
+            self.logger.warning(f"LLM analysis failed: {e}, falling back to rule-based")
+            return self._analyze_prompt_fallback(prompt)
+    
+    def _analyze_prompt_fallback(self, prompt: str) -> Dict[str, Any]:
+        """Fallback rule-based prompt analysis"""
         
         prompt_lower = prompt.lower()
         
@@ -236,17 +352,34 @@ class PlannerAgent(BaseAgent):
             "entities": [],
             "actions": [],
             "descriptors": [],
+            "materials": [],
+            "text_elements": [],
             "spatial_relationships": [],
             "estimated_complexity": TaskComplexity.MODERATE,
             "primary_intent": "create_3d_asset"
         }
         
         # Extract descriptive words (adjectives, colors, materials)
-        descriptors = re.findall(r'\b(old|young|large|small|big|tiny|red|blue|green|yellow|wooden|metal|glass|leather|fabric|smooth|rough|shiny|matte)\b', prompt_lower)
+        descriptors = re.findall(r'\b(old|young|large|small|big|tiny|red|blue|green|yellow|white|brown|black|wooden|metal|glass|leather|fabric|smooth|rough|shiny|matte)\b', prompt_lower)
         analysis["descriptors"] = list(set(descriptors))
         
+        # Extract materials and colors
+        materials = re.findall(r'\b(wood|metal|glass|plastic|stone|leather|rubber|fabric|white|brown|black|red|blue|green|yellow)\b', prompt_lower)
+        analysis["materials"] = list(set(materials))
+        
+        # Extract common objects
+        objects = re.findall(r'\b(mug|cup|coffee|chair|table|desk|bed|sofa|house|room|car|bottle|bowl|plate|sphere|cube|cylinder)\b', prompt_lower)
+        analysis["entities"] = list(set(objects))
+        
+        # Extract text elements
+        text_matches = re.findall(r"'([^']+)'|\"([^\"]+)\"|text|label|writing", prompt_lower)
+        text_elements = [match[0] or match[1] for match in text_matches if match[0] or match[1]]
+        if 'text' in prompt_lower or 'label' in prompt_lower:
+            text_elements.append("text_element")
+        analysis["text_elements"] = text_elements
+        
         # Extract actions and poses
-        actions = re.findall(r'\b(sitting|standing|walking|running|holding|wearing|looking|contemplating|thinking|resting)\b', prompt_lower)
+        actions = re.findall(r'\b(create|make|build|design|model|sitting|standing|walking|running|holding|wearing|looking)\b', prompt_lower)
         analysis["actions"] = list(set(actions))
         
         # Extract spatial relationships
@@ -265,12 +398,53 @@ class PlannerAgent(BaseAgent):
         
         return analysis
     
-    def _extract_entities(self, prompt: str) -> List[Dict[str, Any]]:
-        """Extract entities using intelligent semantic analysis"""
+    def _extract_entities(self, prompt: str, analysis: Dict[str, Any] = None) -> List[Dict[str, Any]]:
+        """Extract entities using LLM-enhanced analysis"""
+        
+        # Get analysis from LLM or fallback if not provided
+        if analysis is None:
+            analysis = self._analyze_prompt(prompt)
+        
+        entities = []
+        
+        # Convert analysis to entity format
+        for obj in analysis.get("entities", []):
+            entities.append({
+                "name": obj,
+                "type": "object",
+                "confidence": 0.9,
+                "source": "llm_analysis"
+            })
+        
+        # Add materials as entities
+        for material in analysis.get("materials", []):
+            entities.append({
+                "name": material,
+                "type": "material",
+                "confidence": 0.8,
+                "source": "llm_analysis"
+            })
+        
+        # Add text elements as entities
+        for text in analysis.get("text_elements", []):
+            entities.append({
+                "name": text,
+                "type": "text",
+                "confidence": 0.7,
+                "source": "llm_analysis"
+            })
+        
+        # If no entities found via LLM, fall back to semantic scoring
+        if not entities:
+            entities = self._extract_entities_fallback(prompt)
+        
+        return entities
+    
+    def _extract_entities_fallback(self, prompt: str) -> List[Dict[str, Any]]:
+        """Fallback entity extraction using semantic categories"""
         
         entities = []
         prompt_lower = prompt.lower()
-        words = prompt_lower.split()
         
         # Score each task type based on semantic relevance
         task_scores = {}
@@ -400,75 +574,103 @@ class PlannerAgent(BaseAgent):
             "context": prompt[:50] + "..." if len(prompt) > 50 else prompt
         }]
     
-    def _generate_subtasks(
-        self, 
-        prompt_analysis: Dict[str, Any], 
-        entities: List[Dict[str, Any]], 
-        input_data: PlannerInput
-    ) -> List[SubTask]:
-        """Generate subtasks based on prompt analysis and entities"""
+    def _generate_subtasks(self, analysis: Dict[str, Any], entities: List[Dict[str, Any]], input_data) -> List[SubTask]:
+        """Generate subtasks based on LLM-enhanced entity extraction"""
         
         subtasks = []
-        task_counter = 1
+        task_id_counter = 1
         
-        # Group entities by task type
-        entities_by_type = {}
-        for entity in entities:
-            task_type = entity["task_type"]
-            if task_type not in entities_by_type:
-                entities_by_type[task_type] = []
-            entities_by_type[task_type].append(entity)
+        # Enhanced entity processing based on LLM analysis
+        objects = [e for e in entities if e.get("type") == "object"]
+        materials = [e for e in entities if e.get("type") == "material"]
+        text_elements = [e for e in entities if e.get("type") == "text"]
         
-        # Generate subtasks for each entity type
-        for task_type, entity_list in entities_by_type.items():
+        # Create object subtasks
+        for obj_entity in objects:
+            obj_name = obj_entity["name"]
+            subtask = SubTask(
+                task_id=f"task_{task_id_counter:03d}",
+                title=f"Create {obj_name.title()}",
+                description=f"Create {obj_name} using appropriate mesh primitives and modeling techniques",
+                type=TaskType.CREATE_OBJECT,
+                complexity=analysis.get("estimated_complexity", TaskComplexity.MODERATE),
+                priority=TaskPriority.HIGH,
+                estimated_time_minutes=self._estimate_time(TaskType.CREATE_OBJECT, analysis["estimated_complexity"]),
+                dependencies=[]
+            )
+            subtasks.append(subtask)
+            task_id_counter += 1
+        
+        # Create material application subtask if materials or colors detected
+        if materials or analysis.get("materials", []):
+            all_materials = materials + [{"name": m, "type": "material"} for m in analysis.get("materials", [])]
+            material_names = list(set([m["name"] for m in all_materials]))
             
-            if task_type == TaskType.CREATE_CHARACTER:
-                subtask = self._create_character_subtask(
-                    task_counter, entity_list, prompt_analysis
-                )
-                subtasks.append(subtask)
-                task_counter += 1
-                
-            elif task_type == TaskType.CREATE_FURNITURE:
-                for entity in entity_list:
-                    subtask = self._create_furniture_subtask(
-                        task_counter, entity, prompt_analysis
-                    )
-                    subtasks.append(subtask)
-                    task_counter += 1
-                    
-            elif task_type == TaskType.CREATE_CLOTHING:
-                subtask = self._create_clothing_subtask(
-                    task_counter, entity_list, prompt_analysis
-                )
-                subtasks.append(subtask)
-                task_counter += 1
-                
-            elif task_type == TaskType.LIGHTING_SETUP:
-                subtask = self._create_lighting_subtask(
-                    task_counter, entity_list, prompt_analysis
-                )
-                subtasks.append(subtask)
-                task_counter += 1
-        
-        # Add scene composition if multiple objects
-        if len(subtasks) > 1 or prompt_analysis.get("spatial_relationships"):
-            composition_subtask = self._create_composition_subtask(
-                task_counter, prompt_analysis, subtasks
+            subtask = SubTask(
+                task_id=f"task_{task_id_counter:03d}",
+                title="Apply Materials and Colors",
+                description=f"Apply materials, colors, and textures: {', '.join(material_names)}",
+                type=TaskType.MATERIAL_APPLICATION,
+                complexity=TaskComplexity.MODERATE,
+                priority=TaskPriority.MEDIUM,
+                estimated_time_minutes=self._estimate_time(TaskType.MATERIAL_APPLICATION, TaskComplexity.MODERATE),
+                dependencies=[f"task_{i:03d}" for i in range(1, task_id_counter)]
             )
-            subtasks.append(composition_subtask)
-            task_counter += 1
+            subtasks.append(subtask)
+            task_id_counter += 1
         
-        # Add material application if descriptors found
-        if prompt_analysis.get("descriptors"):
-            material_subtask = self._create_material_subtask(
-                task_counter, prompt_analysis
+        # Create text application subtask if text elements detected
+        if text_elements or analysis.get("text_elements", []):
+            all_text = text_elements + [{"name": t, "type": "text"} for t in analysis.get("text_elements", [])]
+            text_names = list(set([t["name"] for t in all_text if t["name"] != "text_element"]))
+            
+            if text_names:
+                subtask = SubTask(
+                    task_id=f"task_{task_id_counter:03d}",
+                    title="Add Text Elements",
+                    description=f"Add text elements: {', '.join(text_names)}",
+                    type=TaskType.MATERIAL_APPLICATION,  # Text is handled as material/texture
+                    complexity=TaskComplexity.MODERATE,
+                    priority=TaskPriority.MEDIUM,
+                    estimated_time_minutes=10,
+                    dependencies=[f"task_{i:03d}" for i in range(1, task_id_counter)]
+                )
+                subtasks.append(subtask)
+                task_id_counter += 1
+        
+        # Add scene composition if multiple objects or complex scene
+        if len(objects) > 1 or analysis.get("estimated_complexity") in [TaskComplexity.COMPLEX, TaskComplexity.EXPERT]:
+            subtask = SubTask(
+                task_id=f"task_{task_id_counter:03d}",
+                title="Compose Scene",
+                description="Arrange and compose the final scene",
+                type=TaskType.SCENE_COMPOSITION,
+                complexity=TaskComplexity.SIMPLE,
+                priority=TaskPriority.LOW,
+                estimated_time_minutes=5,
+                dependencies=[f"task_{i:03d}" for i in range(1, task_id_counter)]
             )
-            subtasks.append(material_subtask)
-            task_counter += 1
+            subtasks.append(subtask)
+            task_id_counter += 1
+        
+        # Ensure we have at least one subtask - fallback for unrecognized prompts
+        if not subtasks:
+            # Use LLM analysis to create a more specific default task
+            primary_intent = analysis.get("primary_intent", "create 3D asset")
+            subtask = SubTask(
+                task_id="task_001",
+                title=f"Create Asset: {primary_intent}",
+                description=f"Create the requested asset based on prompt: {analysis['original_prompt']}",
+                type=TaskType.CREATE_OBJECT,
+                complexity=analysis.get("estimated_complexity", TaskComplexity.MODERATE),
+                priority=TaskPriority.HIGH,
+                estimated_time_minutes=15,
+                dependencies=[]
+            )
+            subtasks.append(subtask)
         
         return subtasks
-    
+
     def _create_character_subtask(
         self,
         task_id: int, 

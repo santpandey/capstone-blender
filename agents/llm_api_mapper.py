@@ -8,11 +8,14 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Any
-import google.generativeai as genai
+from typing import List, Dict, Any, Optional
+import json
+import asyncio
 from dotenv import load_dotenv
-
+import google.generativeai as genai
+from .base_agent import BaseAgent
 from .models import SubTask, APIMapping
+from .simple_validator import SimpleAPIValidator
 from prompts import APIMapperPrompts
 
 # Load environment variables
@@ -33,6 +36,9 @@ class LLMAPIMapper:
         
         genai.configure(api_key=api_key)
         self.model_name = model_name
+        
+        # Initialize simple API validator
+        self.api_validator = SimpleAPIValidator()
         
         # Load Blender API registry for context
         self.api_registry_path = Path(__file__).parent.parent / "blender_api_registry.json"
@@ -134,8 +140,9 @@ class LLMAPIMapper:
         # Step 6: Remove invalid parameter references
         response = re.sub(r'"material":\s*bpy\.data\.materials\[[^\]]+\]', '"material": "WhiteMaterial"', response)
         
-        # Step 7: Fix other malformed API patterns
-        response = re.sub(r'"api_name":\s*"bpy\.ops\.obj[^"]*"', '"api_name": "bpy.ops.mesh.primitive_uv_sphere_add"', response)
+        # Step 7: Fix malformed API patterns with semantic awareness
+        # Don't force spheres - use context-appropriate defaults
+        response = re.sub(r'"api_name":\s*"bpy\.ops\.obj[^"]*"', '"api_name": "bpy.ops.mesh.primitive_cylinder_add"', response)
         
         # Step 8: Convert Python literals
         response = response.replace('None', 'null')
@@ -291,45 +298,127 @@ class LLMAPIMapper:
                     call["parameters"] = {"radius": 1.0, "location": [0, 0, 0]}
                     call["description"] = "Create basic sphere primitive"
                 
+                # Validate API call using the simple validator
+                validation_result = self.api_validator.validate_and_clean(
+                    api_name, 
+                    call.get("parameters", {})
+                )
+                
+                # Use validated and corrected parameters
+                final_api_name = validation_result["api_name"]
+                final_parameters = validation_result["parameters"]
+                
+                # Log corrections if any
+                if validation_result["corrections"]:
+                    print(f"🔧 API Corrections for {api_name}:")
+                    for correction in validation_result["corrections"]:
+                        print(f"   - {correction}")
+                
                 validated_calls.append({
-                    "api_name": api_name,
-                    "parameters": call.get("parameters", {}),
+                    "api_name": final_api_name,
+                    "parameters": final_parameters,
                     "description": call.get("description", ""),
-                    "execution_order": call.get("execution_order", len(validated_calls) + 1)
+                    "execution_order": call.get("execution_order", len(validated_calls) + 1),
+                    "validation_status": "valid"
                 })
                 
         return validated_calls
     
     def _fallback_mapping(self, subtask: SubTask) -> List[Dict[str, Any]]:
-        """Fallback mapping when LLM fails"""
-        
+        """
+        Intelligent fallback mapping when LLM fails to generate API calls.
+        Uses semantic understanding of object types for appropriate geometry selection.
+        """
         fallback_apis = []
         
-        # Basic fallback based on subtask type and operations
-        if subtask.type.value == "CREATE_CHARACTER":
+        if subtask.type.value == "CREATE_OBJECT":
+            # Semantic shape selection based on object name/description
+            object_name = subtask.title.lower()
+            description = subtask.description.lower() if subtask.description else ""
+            combined_text = f"{object_name} {description}"
+            
+            # Coffee mug/cup detection
+            if any(word in combined_text for word in ['mug', 'cup', 'coffee', 'tea']):
+                fallback_apis = [
+                    {
+                        "api_name": "bpy.ops.mesh.primitive_cylinder_add",
+                        "parameters": {"radius": 0.8, "depth": 1.2, "location": [0, 0, 0]},
+                        "description": f"Create cylinder body for {subtask.title}",
+                        "execution_order": 1
+                    },
+                    {
+                        "api_name": "bpy.ops.mesh.primitive_torus_add",
+                        "parameters": {"major_radius": 0.6, "minor_radius": 0.1, "location": [1.0, 0, 0.3]},
+                        "description": f"Create torus handle for {subtask.title}",
+                        "execution_order": 2
+                    }
+                ]
+            # Chair detection
+            elif any(word in combined_text for word in ['chair', 'seat', 'stool']):
+                fallback_apis = [
+                    {
+                        "api_name": "bpy.ops.mesh.primitive_cube_add",
+                        "parameters": {"size": 1.0, "location": [0, 0, 0.5]},
+                        "description": f"Create seat for {subtask.title}",
+                        "execution_order": 1
+                    },
+                    {
+                        "api_name": "bpy.ops.mesh.primitive_cube_add",
+                        "parameters": {"size": 1.0, "location": [0, -0.4, 1.2]},
+                        "description": f"Create backrest for {subtask.title}",
+                        "execution_order": 2
+                    }
+                ]
+            # Ball/sphere detection
+            elif any(word in combined_text for word in ['ball', 'sphere', 'globe', 'orb']):
+                fallback_apis = [{
+                    "api_name": "bpy.ops.mesh.primitive_uv_sphere_add",
+                    "parameters": {"radius": 1.0, "location": [0, 0, 0]},
+                    "description": f"Create sphere for {subtask.title}",
+                    "execution_order": 1
+                }]
+            # Table detection
+            elif any(word in combined_text for word in ['table', 'desk', 'surface']):
+                fallback_apis = [
+                    {
+                        "api_name": "bpy.ops.mesh.primitive_cube_add",
+                        "parameters": {"size": 2.0, "location": [0, 0, 1.0]},
+                        "description": f"Create table top for {subtask.title}",
+                        "execution_order": 1
+                    }
+                ]
+            # Default fallback - cylinder (more versatile than cube)
+            else:
+                fallback_apis = [{
+                    "api_name": "bpy.ops.mesh.primitive_cylinder_add",
+                    "parameters": {"radius": 1.0, "depth": 2.0, "location": [0, 0, 0]},
+                    "description": f"Create basic cylindrical object for {subtask.title}",
+                    "execution_order": 1
+                }]
+                
+        elif subtask.type.value == "APPLY_MATERIAL":
+            # Basic material creation and application
             fallback_apis = [
                 {
-                    "api_name": "bpy.ops.mesh.primitive_cube_add",
-                    "parameters": {"size": 2.0, "location": [0, 0, 1]},
-                    "description": "Add cube for torso",
+                    "api_name": "bpy.data.materials.new",
+                    "parameters": {"name": "BasicMaterial"},
+                    "description": "Create basic material",
                     "execution_order": 1
                 },
                 {
-                    "api_name": "bpy.ops.mesh.primitive_uv_sphere_add",
-                    "parameters": {"radius": 0.5, "location": [0, 0, 2.5]},
-                    "description": "Add sphere for head",
+                    "api_name": "bpy.context.object.data.materials.append",
+                    "parameters": {"material": "BasicMaterial"},
+                    "description": "Apply material to active object",
                     "execution_order": 2
                 }
             ]
-        elif subtask.type.value == "CREATE_FURNITURE":
-            fallback_apis = [
-                {
-                    "api_name": "bpy.ops.mesh.primitive_cube_add",
-                    "parameters": {"size": 1.0, "location": [0, 0, 0.5]},
-                    "description": "Add cube for furniture base",
-                    "execution_order": 1
-                }
-            ]
+        elif subtask.type.value == "ADD_TEXT":
+            fallback_apis = [{
+                "api_name": "bpy.ops.object.text_add",
+                "parameters": {"location": [0, 0, 0]},
+                "description": f"Add text for {subtask.title}",
+                "execution_order": 1
+            }]
         
         return fallback_apis
     

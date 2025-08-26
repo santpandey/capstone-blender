@@ -102,11 +102,6 @@ async def test_complete_pipeline():
         
         plan = planner_result.plan
         
-        # DEBUG: Check plan summary and other fields
-        print(f"   🔍 DEBUG: plan.summary = '{plan.summary}'")
-        print(f"   🔍 DEBUG: plan.plan_id = '{plan.plan_id}'")
-        print(f"   🔍 DEBUG: plan.original_prompt = '{plan.original_prompt}'")
-        
         print(f"   ✅ Generated {len(plan.subtasks)} subtasks")
         for i, subtask in enumerate(plan.subtasks[:3]):  # Show first 3
             print(f"      {i+1}. {subtask.title} ({subtask.type.value})")
@@ -118,7 +113,7 @@ async def test_complete_pipeline():
             plan=plan,
             available_servers=["blender-mesh", "blender-objects", "blender-geometry", "blender-shaders"],
             execution_context={
-                "scene_name": "old_man_scene",
+                "scene_name": "generated_scene",
                 "target_format": "gltf",
                 "quality": "high"
             }
@@ -138,17 +133,13 @@ async def test_complete_pipeline():
         api_mappings = coordinator_result.api_mappings
         total_apis = sum(len(mapping.api_calls) for mapping in api_mappings)
         
-        # Guard against division by zero
         if len(api_mappings) > 0:
             avg_confidence = sum(mapping.confidence_score for mapping in api_mappings) / len(api_mappings)
             print(f"   ✅ Mapped {len(api_mappings)} subtasks to {total_apis} API calls")
             print(f"   Average confidence: {avg_confidence:.3f}")
         else:
-            print(f"   ⚠️ No API mappings generated - coordinator failed to map subtasks")
-            print(f"   This indicates an issue with the Coordinator Agent's API mapping process")
+            print(f"   ⚠️ No API mappings generated")
             avg_confidence = 0.0
-        
-        print(f"   Execution strategy: {coordinator_result.execution_strategy}")
         
         # Step 4: Coder Agent - Generate Python script
         print(f"\n💻 **Step 4: Coder Agent - Generating Python Script**")
@@ -267,13 +258,11 @@ async def test_agent_health_checks():
             print(f"\n🔍 **{name} Agent Health**:")
             
             if isinstance(health, bool):
-                # Simple boolean health check
                 status = "✅" if health else "❌"
                 print(f"   {status} healthy: {health}")
                 if not health:
                     all_healthy = False
             elif isinstance(health, dict):
-                # Detailed health check with metrics
                 for key, value in health.items():
                     status = "✅" if value else "❌" if isinstance(value, bool) else "📊"
                     print(f"   {status} {key}: {value}")
@@ -317,10 +306,14 @@ async def main():
             
         # Ask if user wants to continue
         print("\n" + "="*80)
-        continue_choice = input("🔄 Generate another asset? (y/n): ").strip().lower()
-        
-        if continue_choice not in ['y', 'yes']:
-            print("👋 Thank you for using the 3D Asset Generation Pipeline!")
+        try:
+            continue_choice = input("🔄 Generate another asset? (y/n): ").strip().lower()
+            
+            if continue_choice not in ['y', 'yes']:
+                print("👋 Thank you for using the 3D Asset Generation Pipeline!")
+                break
+        except (EOFError, KeyboardInterrupt):
+            print("\n👋 Pipeline execution completed!")
             break
     
     return True
