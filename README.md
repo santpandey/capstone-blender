@@ -1,6 +1,6 @@
-# Dynamic 3D Asset Generation Pipeline
+# 🎨 3D Asset Generator - AI-Powered Blender Automation
 
-A comprehensive multi-agent system for generating 3D assets from natural language prompts using Blender Python API, intelligent planning, and automated script generation.
+A comprehensive web application with multi-agent system for generating 3D assets from natural language prompts using Blender automation, intelligent planning, and automated script generation.
 
 ## Project Overview
 
@@ -58,28 +58,86 @@ Task Planning → API Mapping → Script Generation → Validation → Blender E
 
 ## Installation
 
-1. Create and activate virtual environment:
+1. Install uv (if not already installed):
 ```bash
-uv venv
-.venv\Scripts\activate  # Windows
+# Linux/Mac
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Windows
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-2. Install dependencies:
+2. Clone and install dependencies:
 ```bash
-uv sync
+git clone <repository-url>
+cd capstone
+uv sync --extra web --extra mcp --extra vector
 ```
 
-3. Install development dependencies:
+3. For development with all extras:
 ```bash
-uv sync --extra dev
+uv sync --extra dev --extra web --extra mcp --extra vector
+```
+
+## Quick Start
+
+### 🚀 **Option 1: Docker (Recommended)**
+
+```bash
+# Clone the repository
+git clone <your-repo-url>
+cd capstone
+
+# Start the application
+./start.sh  # Linux/Mac
+start.bat   # Windows
+
+# Access the web interface
+open http://localhost:3000
+```
+
+### 🛠️ **Option 2: Development Mode**
+
+```bash
+# Install dependencies
+uv sync --extra web --extra mcp --extra vector
+
+# Start backend
+cd backend
+uv run python main.py &
+
+# Start frontend (separate terminal)
+cd front_end
+python -m http.server 3000
+
+# Access the web interface
+open http://localhost:3000
+```
+
+### 🌐 **Option 3: AWS Deployment**
+
+```bash
+# Deploy to AWS
+cd aws
+./deploy.sh your-domain.com
+
+# Access via your domain or ALB DNS
 ```
 
 ## Usage
 
-### Run the 3D Asset Generation Pipeline
+### Web Interface
+1. **Open** http://localhost:3000 in your browser
+2. **Enter** a description like "Create a red cricket ball"
+3. **Click** "Generate 3D Asset"
+4. **Watch** real-time progress updates
+5. **View** the generated 3D model in the browser
+6. **Download** the GLB file for use in other applications
+
+### Command Line (Development)
 
 ```bash
-python test_complete_pipeline.py
+uv run python test_complete_pipeline.py
 ```
 
 This launches the interactive pipeline where you can:
@@ -112,7 +170,7 @@ Enter your 3D asset description below:
 ### Parse Blender API Documentation (Development)
 
 ```bash
-python blender_api_parser.py
+uv run python blender_api_parser.py
 ```
 
 Extracts and processes Blender API documentation for the agent system.
@@ -165,6 +223,11 @@ uv run isort .
 uv run mypy blender_api_parser.py
 ```
 
+### Run tests:
+```bash
+uv run pytest
+```
+
 ## Recent Achievements
 
 ✅ **Multi-Agent Pipeline Complete** (January 2025)
@@ -184,21 +247,38 @@ uv run mypy blender_api_parser.py
 - Comprehensive API registry integration
 - Invalid operation replacement with valid alternatives
 
-## Roadmap
+## Features
 
-- [x] Blender API HTML parser
-- [x] API registry generation (2000+ APIs)
+### ✅ **Completed (Milestone 1)**
+- [x] **Web Interface**: Modern responsive frontend with 3D model viewer
+- [x] **FastAPI Backend**: RESTful API integrating with multi-agent pipeline
+- [x] **Headless Blender**: Docker-based Blender execution environment
+- [x] **GLB Export**: Automatic 3D model export in web-compatible format
+- [x] **Real-time Status**: Live progress updates during generation
+- [x] **Download System**: Direct GLB file download functionality
+
+### ✅ **Core Pipeline (Previously Completed)**
+- [x] Blender API HTML parser (2000+ APIs)
 - [x] Multi-agent architecture implementation
 - [x] Natural language → API mapping (LLM-powered)
 - [x] Intelligent material and color system
 - [x] Script generation with error handling
 - [x] Asset validation and QA system
+
+### 🚀 **AWS Deployment Ready**
+- [x] **Infrastructure as Code**: Complete Terraform configuration
+- [x] **Auto Scaling**: EC2 Auto Scaling Groups with health checks
+- [x] **Load Balancing**: Application Load Balancer with SSL support
+- [x] **Route 53**: DNS configuration for custom domains
+- [x] **Security**: VPC with public/private subnets, security groups
+
+### 🔮 **Future Enhancements**
 - [ ] Enhanced object geometry (handles, complex shapes)
 - [ ] Lighting and camera positioning
-- [ ] GLTF export pipeline
-- [ ] Headless Blender integration
-- [ ] Three.js integration
-- [ ] Web frontend interface
+- [ ] Texture mapping and advanced materials
+- [ ] Animation support
+- [ ] Batch processing
+- [ ] User authentication and asset galleries
 
 ## Contributing
 
