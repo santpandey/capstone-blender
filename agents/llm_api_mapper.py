@@ -126,7 +126,34 @@ class LLMAPIMapper:
         # Step 3: Fix array syntax (0, 0, 0) -> [0, 0, 0]
         response = re.sub(r'\((\s*[-\d\.\s,]+\s*)\)', r'[\1]', response)
         
-        # Step 4: Fix malformed API names - replace invalid calls with valid ones
+        # Step 4: Fix missing commas - CONSERVATIVE APPROACH
+        # Only fix obvious missing commas between object properties on separate lines
+        lines = response.split('\n')
+        fixed_lines = []
+        
+        for i, line in enumerate(lines):
+            fixed_lines.append(line)
+            
+            # Check if next line starts with a property and current line doesn't end with comma
+            if i < len(lines) - 1:
+                next_line = lines[i + 1].strip()
+                current_line = line.strip()
+                
+                # If current line has a property but no comma, and next line starts with a property
+                if (current_line and 
+                    '"' in current_line and 
+                    ':' in current_line and 
+                    not current_line.endswith(',') and 
+                    not current_line.endswith('{') and
+                    not current_line.endswith('[') and
+                    next_line.startswith('"') and
+                    ':' in next_line):
+                    # Add comma to current line
+                    fixed_lines[-1] = line.rstrip() + ','
+        
+        response = '\n'.join(fixed_lines)
+        
+        # Step 5: Fix malformed API names - replace invalid calls with valid ones
         # Fix: bpy.data.materials['RedMaterial'].diffuse_color -> bpy.ops.object.select_all
         response = re.sub(r'"api_name":\s*"bpy\.data\.materials\[[^\]]+\][^"]*"', '"api_name": "bpy.ops.object.select_all"', response)
         
@@ -134,29 +161,82 @@ class LLMAPIMapper:
         response = re.sub(r'"api_name":\s*"bpy\.ops\.material\.new"', '"api_name": "bpy.ops.object.select_all"', response)
         response = re.sub(r'"api_name":\s*"bpy\.ops\.view3d\.[^"]*"', '"api_name": "bpy.ops.transform.translate"', response)
         
-        # Step 5: Fix single quotes 'WORLD' -> "WORLD" (but avoid breaking already fixed API names)
+        # Step 6: Fix single quotes 'WORLD' -> "WORLD" (but avoid breaking already fixed API names)
         response = re.sub(r"'([^']*)'", r'"\1"', response)
         
-        # Step 6: Remove invalid parameter references
+        # Step 7: Remove invalid parameter references
         response = re.sub(r'"material":\s*bpy\.data\.materials\[[^\]]+\]', '"material": "WhiteMaterial"', response)
         
-        # Step 7: Fix malformed API patterns with semantic awareness
+        # Step 8: Fix malformed API patterns with semantic awareness
         # Don't force spheres - use context-appropriate defaults
         response = re.sub(r'"api_name":\s*"bpy\.ops\.obj[^"]*"', '"api_name": "bpy.ops.mesh.primitive_cylinder_add"', response)
         
-        # Step 8: Convert Python literals
+        # Step 9: Convert Python literals
         response = response.replace('None', 'null')
         response = response.replace('True', 'true')
         response = response.replace('False', 'false')
         
-        # Step 9: Remove trailing commas
+        # Step 10: Remove trailing commas
         response = re.sub(r',(\s*[}\]])', r'\1', response)
         
-        # Step 10: Handle smart quotes
+        # Step 11: Handle smart quotes
         response = response.replace('"', '"').replace('"', '"')
         response = response.replace(''', "'").replace(''', "'")
         
         return response.strip()
+
+    def _aggressive_json_fix(self, json_str: str) -> str:
+        """Apply aggressive JSON fixing for severely malformed responses"""
+        import re
+        
+        # Fix missing quotes around property names (only for obvious cases)
+        lines = json_str.split('\n')
+        fixed_lines = []
+        
+        for line in lines:
+            # Only fix lines that clearly have unquoted property names
+            if re.match(r'^\s*\w+\s*:', line) and not re.match(r'^\s*"', line):
+                # Add quotes around property name
+                line = re.sub(r'(\s*)(\w+)(\s*:)', r'\1"\2"\3', line)
+            fixed_lines.append(line)
+        
+        json_str = '\n'.join(fixed_lines)
+        
+        # Fix missing commas - CONSERVATIVE APPROACH
+        lines = json_str.split('\n')
+        fixed_lines = []
+        
+        for i, line in enumerate(lines):
+            fixed_lines.append(line)
+            
+            # Check if next line starts with a property and current line doesn't end with comma
+            if i < len(lines) - 1:
+                next_line = lines[i + 1].strip()
+                current_line = line.strip()
+                
+                # If current line has a property but no comma, and next line starts with a property
+                if (current_line and 
+                    '"' in current_line and 
+                    ':' in current_line and 
+                    not current_line.endswith(',') and 
+                    not current_line.endswith('{') and
+                    not current_line.endswith('[') and
+                    next_line.startswith('"') and
+                    ':' in next_line):
+                    # Add comma to current line
+                    fixed_lines[-1] = line.rstrip() + ','
+        
+        json_str = '\n'.join(fixed_lines)
+        
+        # Fix arrays with parentheses instead of brackets
+        json_str = re.sub(r'location:\s*\(([^)]+)\)', r'location: [\1]', json_str)
+        json_str = re.sub(r'rotation:\s*\(([^)]+)\)', r'rotation: [\1]', json_str)
+        json_str = re.sub(r'scale:\s*\(([^)]+)\)', r'scale: [\1]', json_str)
+        
+        # Remove trailing commas
+        json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
+        
+        return json_str
 
     def _parse_llm_response(self, response: str) -> List[Dict[str, Any]]:
         """Parse LLM response and extract API calls"""
@@ -181,30 +261,45 @@ class LLMAPIMapper:
                     raise ValueError("JSON structure not recognized")
             except json.JSONDecodeError as parse_error:
                 print(f"⚠️ Direct JSON parsing failed: {parse_error}")
+                print(f"📝 Attempted to parse: {cleaned_response[:200]}...")
                 
-                # Approach 2: Try regex extraction as fallback
-                import re
-                json_match = re.search(r'\{.*"api_calls"\s*:\s*\[.*?\]\s*.*?\}', cleaned_response, re.DOTALL)
-                if json_match:
-                    try:
-                        json_str = json_match.group(0)
-                        print(f"🔧 Attempting regex extraction: {json_str[:200]}...")
-                        data = json.loads(json_str)
-                        api_calls = data.get("api_calls", [])
-                        print(f"✅ Regex extraction successful: {len(api_calls)} calls")
-                    except Exception as regex_error:
-                        print(f"❌ Regex extraction failed: {regex_error}")
+                # Approach 2: Try more aggressive JSON fixing
+                try:
+                    fixed_response = self._aggressive_json_fix(cleaned_response)
+                    data = json.loads(fixed_response)
+                    if isinstance(data, dict) and "api_calls" in data:
+                        api_calls = data["api_calls"]
+                        print(f"✅ Aggressive JSON fixing successful: {len(api_calls)} calls")
+                    elif isinstance(data, list):
+                        api_calls = data
+                        print(f"✅ Aggressive JSON fixing successful: {len(api_calls)} calls")
+                except Exception as aggressive_error:
+                    print(f"❌ Aggressive JSON fixing failed: {aggressive_error}")
                 
-                # Approach 3: Try array-only extraction
+                # Approach 3: Try regex extraction as fallback
                 if not api_calls:
-                    array_match = re.search(r'\[.*\]', cleaned_response, re.DOTALL)
-                    if array_match:
+                    import re
+                    json_match = re.search(r'\{.*"api_calls"\s*:\s*\[.*?\]\s*.*?\}', cleaned_response, re.DOTALL)
+                    if json_match:
                         try:
-                            array_str = array_match.group(0)
-                            api_calls = json.loads(array_str)
-                            print(f"✅ Array extraction successful: {len(api_calls)} calls")
-                        except Exception as array_error:
-                            print(f"❌ Array extraction failed: {array_error}")
+                            json_str = json_match.group(0)
+                            print(f"🔧 Attempting regex extraction: {json_str[:200]}...")
+                            data = json.loads(json_str)
+                            api_calls = data.get("api_calls", [])
+                            print(f"✅ Regex extraction successful: {len(api_calls)} calls")
+                        except Exception as regex_error:
+                            print(f"❌ Regex extraction failed: {regex_error}")
+                    
+                    # Approach 4: Try array-only extraction
+                    if not api_calls:
+                        array_match = re.search(r'\[.*\]', cleaned_response, re.DOTALL)
+                        if array_match:
+                            try:
+                                array_str = array_match.group(0)
+                                api_calls = json.loads(array_str)
+                                print(f"✅ Array extraction successful: {len(api_calls)} calls")
+                            except Exception as array_error:
+                                print(f"❌ Array extraction failed: {array_error}")
             
             if not isinstance(api_calls, list):
                 raise ValueError(f"API calls must be a JSON array, got: {type(api_calls)}")

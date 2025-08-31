@@ -378,7 +378,7 @@ class CoordinatorAgent(BaseAgent):
             TaskType.CREATE_OBJECT: [
                 {
                     "api_name": "bpy.ops.mesh.primitive_uv_sphere_add",
-                    "parameters": {"radius": 1.0, "location": (0, 0, 0)},
+                    "parameters": {"radius": 1.0, "location": [0, 0, 0]},
                     "description": "Create UV sphere primitive",
                     "execution_order": 1
                 }
@@ -400,7 +400,7 @@ class CoordinatorAgent(BaseAgent):
                 },
                 {
                     "api_name": "bpy.ops.transform.translate",
-                    "parameters": {"value": (0, 0, 0)},
+                    "parameters": {"value": [0, 0, 0]},
                     "description": "Position objects in scene",
                     "execution_order": 2
                 }
@@ -411,7 +411,7 @@ class CoordinatorAgent(BaseAgent):
         api_calls = basic_mappings.get(subtask.type, [
             {
                 "api_name": "bpy.ops.mesh.primitive_cube_add",
-                "parameters": {"size": 2.0, "location": (0, 0, 0)},
+                "parameters": {"size": 2.0, "location": [0, 0, 0]},
                 "description": "Create basic cube primitive",
                 "execution_order": 1
             }
@@ -593,7 +593,7 @@ class CoordinatorAgent(BaseAgent):
         
         # Location parameters for primitive creation
         if "primitive" in api_name_lower or "add" in api_name_lower:
-            parameters["location"] = (0, 0, 0)
+            parameters["location"] = [0, 0, 0]
         
         # Context-specific parameter inference
         if subtask.context:

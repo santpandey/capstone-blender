@@ -215,7 +215,7 @@ async def demo_code_generation(server: BlenderMeshServer):
         {
             'apis': ['bpy.ops.mesh.primitive_cube_add', 'bpy.ops.mesh.bevel'],
             'parameters': {
-                'bpy.ops.mesh.primitive_cube_add': {'size': 2.0, 'location': (0, 0, 0)},
+                'bpy.ops.mesh.primitive_cube_add': {'size': 2.0, 'location': [0, 0, 0]},
                 'bpy.ops.mesh.bevel': {'offset': 0.1, 'segments': 3}
             },
             'context': 'Create a beveled cube for architectural modeling',
