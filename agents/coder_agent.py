@@ -287,6 +287,30 @@ import sys'''
             ])
         return "\n".join(material_creation_code)
 
+    def _fix_text_positioning(self, api_func_str: str, raw_params: Dict) -> Dict:
+        """Fix text positioning to be on outer surface of cylinder, not inside."""
+        if 'text_add' in api_func_str:
+            # ALWAYS fix text positioning and rotation for consistency
+            if 'location' in raw_params:
+                location = raw_params['location']
+                
+                if isinstance(location, (list, tuple)) and len(location) >= 3:
+                    x, y, z = location[0], location[1], location[2]
+                    
+                    # Place text OUTSIDE cylinder at radius + offset
+                    # Use larger offset to ensure it's clearly outside
+                    corrected_location = [0.7, 0, z]  # radius 0.5 + 0.2 offset
+                    self.logger.warning(f"Fixed text position from {location} to {corrected_location} (outer surface)")
+                    raw_params['location'] = corrected_location
+            
+            # CRITICAL: Remove any rotation - text should be upright and facing forward
+            # The text at X=0.7 will naturally face toward negative X (toward viewer)
+            if 'rotation' in raw_params:
+                del raw_params['rotation']
+                self.logger.warning("Removed rotation - text will face forward naturally")
+        
+        return raw_params
+    
     def _generate_task_execution_section(self, api_mappings: List[APIMapping]) -> str:
         task_methods = []
         object_counter = {'cylinder': 0, 'sphere': 0, 'cube': 0, 'torus': 0, 'text': 0}
@@ -298,6 +322,10 @@ import sys'''
             for api_call in mapping.api_calls:
                 api_func_str = api_call['api_name']
                 raw_params = api_call['parameters']  # Keep raw dict for checking
+                
+                # FIX TEXT POSITIONING BEFORE PROCESSING
+                raw_params = self._fix_text_positioning(api_func_str, raw_params)
+                
                 params_str = self._clean_parameters_for_code(raw_params)  # String for code gen
                 
                 # Detect object type from API name
@@ -343,23 +371,10 @@ import sys'''
                             text_content = note_text.split('Set text body to:')[1].strip()
                             method_body.append(f"            obj.data.body = '{text_content}'")
                             # Set text size if provided
-                            text_size = raw_params.get('_text_size', 1.5)
+                            text_size = raw_params.get('_text_size', 0.5)  # Smaller size for better fit
                             method_body.append(f"            obj.data.size = {text_size}")
-                            # Rotate text to lie flat on cylinder surface (90 degrees on X-axis)
-                            method_body.append("            obj.rotation_euler[0] = 1.5708  # 90 degrees to lay flat")
-                            method_body.append("            obj.rotation_euler[2] = 1.5708  # Also rotate 90 deg on Z for proper orientation")
-                            # Add shrinkwrap modifier to follow curved surface
-                            method_body.append("            # Add shrinkwrap to conform text to cylinder curvature")
-                            method_body.append("            shrink = obj.modifiers.new(name='Shrinkwrap', type='SHRINKWRAP')")
-                            method_body.append("            # Find cylinder object to wrap to")
-                            method_body.append("            for cyl_obj in bpy.data.objects:")
-                            method_body.append("                if 'Cylinder' in cyl_obj.name:")
-                            method_body.append("                    shrink.target = cyl_obj")
-                            method_body.append("                    shrink.wrap_method = 'NEAREST_SURFACEPOINT'")
-                            method_body.append("                    shrink.offset = 0.05  # Small offset from surface")
-                            method_body.append("                    # Apply the modifier to see the effect")
-                            method_body.append("                    bpy.context.view_layer.update()")
-                            method_body.append("                    break")
+                            # Text at X=0.7 will naturally face forward (toward negative X)
+                            # NO rotation needed - keep text upright and horizontal
                             # Apply text color if provided
                             text_color = raw_params.get('_text_color')
                             if text_color:

@@ -118,6 +118,46 @@ class CoordinatorAgent(BaseAgent):
             self.logger.error(f"Failed to initialize Coordinator Agent: {e}")
             return False
     
+    def _deduplicate_text_subtasks(self, plan: TaskPlan) -> TaskPlan:
+        """Remove duplicate text subtasks, keeping only the first one."""
+        text_subtasks = []
+        other_subtasks = []
+        
+        self.logger.info(f"Deduplication: Checking {len(plan.subtasks)} subtasks")
+        
+        for idx, subtask in enumerate(plan.subtasks):
+            # Check if it's a text-related subtask (more comprehensive check)
+            title_lower = subtask.title.lower()
+            desc_lower = subtask.description.lower()
+            
+            is_text = ('text' in title_lower or 'text' in desc_lower or 
+                      'label' in title_lower or 'label' in desc_lower or
+                      'font' in title_lower or 'font' in desc_lower or
+                      'add text' in title_lower or 'add text' in desc_lower or
+                      'create text' in title_lower or 'create text' in desc_lower)
+            
+            if is_text:
+                self.logger.info(f"  Subtask {idx}: '{subtask.title}' - IDENTIFIED AS TEXT")
+                text_subtasks.append(subtask)
+            else:
+                other_subtasks.append(subtask)
+        
+        # Keep only the FIRST text subtask
+        original_text_count = len(text_subtasks)
+        if original_text_count > 1:
+            self.logger.warning(f"Found {original_text_count} text subtasks. Keeping only the FIRST one:")
+            self.logger.warning(f"  KEEPING: '{text_subtasks[0].title}'")
+            for i in range(1, original_text_count):
+                self.logger.warning(f"  REMOVING: '{text_subtasks[i].title}'")
+            text_subtasks = [text_subtasks[0]]
+        elif original_text_count == 1:
+            self.logger.info(f"Found 1 text subtask: '{text_subtasks[0].title}' - OK")
+        
+        # Rebuild the plan with deduplicated subtasks
+        plan.subtasks = other_subtasks + text_subtasks
+        self.logger.info(f"After deduplication: {len(plan.subtasks)} subtasks remain")
+        return plan
+    
     async def process(self, input_data: CoordinatorInput) -> CoordinatorOutput:
         """Process coordination request and generate API mappings"""
         
@@ -132,6 +172,10 @@ class CoordinatorAgent(BaseAgent):
         
         try:
             self.logger.info(f"Coordinating plan with {len(input_data.plan.subtasks)} subtasks")
+            
+            # DEDUPLICATE TEXT SUBTASKS BEFORE PROCESSING
+            input_data.plan = self._deduplicate_text_subtasks(input_data.plan)
+            self.logger.info(f"After deduplication: {len(input_data.plan.subtasks)} subtasks")
             
             start_time = time.time()
             
