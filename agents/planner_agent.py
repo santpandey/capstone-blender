@@ -8,28 +8,24 @@ import uuid
 import asyncio
 import json
 import os
-from typing import Dict, Any, List, Optional, Tuple
-from datetime import datetime
+from typing import Dict, Any, List
 from dotenv import load_dotenv
 import google.generativeai as genai
+from google.api_core import exceptions as google_exceptions
+from .utils.rate_limiter import AsyncRateLimiter
+import os
 
 from .base_agent import BaseAgent
 from .models import (
-    AgentType, AgentStatus, AgentResponse,
-    PlannerInput, PlannerOutput, TaskPlan, SubTask,
+    AgentType, AgentStatus, PlannerInput, PlannerOutput, TaskPlan, SubTask,
     TaskType, TaskComplexity, TaskPriority
 )
 
 class PlannerAgent(BaseAgent):
     """
-    Planner Agent that decomposes natural language prompts into structured subtasks
-    
-    Key responsibilities:
-    1. Parse natural language prompts for 3D modeling intent
-    2. Identify objects, characters, environments, and relationships
-    3. Break down complex requests into manageable subtasks
-    4. Determine task dependencies and execution order
-    5. Estimate complexity and time requirements
+    Planner Agent that decomposes natural language prompts into a structured TaskPlan.
+    This agent uses a powerful LLM with a 'Chain of Thought' prompt to ensure
+    detailed and accurate planning.
     """
     
     def __init__(self):
@@ -37,1071 +33,304 @@ class PlannerAgent(BaseAgent):
             agent_type=AgentType.PLANNER,
             name="Planner Agent"
         )
-        
-        # Load environment variables and initialize LLM
         load_dotenv()
         api_key = os.getenv("GEMINI_API_KEY")
         if api_key:
             genai.configure(api_key=api_key)
             self.llm_available = True
+            rpm = int(os.getenv("GEMINI_RPM", "10"))
+            window = float(os.getenv("GEMINI_RPM_WINDOW_SEC", "60"))
+            self._rate_limiter = AsyncRateLimiter(max_calls=rpm, per_seconds=window)
         else:
             self.llm_available = False
-            self.logger.warning("GEMINI_API_KEY not found, falling back to rule-based parsing")
-        
-        # Initialize planning knowledge base
-        self._init_planning_knowledge()
-        
-    def _init_planning_knowledge(self):
-        """Initialize planning knowledge and semantic understanding"""
-        
-        # Semantic categories for intelligent task classification
-        self.semantic_categories = {
-            TaskType.CREATE_CHARACTER: {
-                "keywords": ["person", "man", "woman", "child", "character", "human", "figure", "people", 
-                           "animal", "dog", "cat", "bird", "creature", "monster", "dragon", "being", "entity"],
-                "descriptors": ["living", "organic", "animated", "facial", "body", "limbs", "head", "torso"],
-                "actions": ["walking", "running", "sitting", "standing", "moving", "breathing"],
-                "context_clues": ["age", "gender", "species", "personality", "emotion"]
-            },
-            TaskType.CREATE_FURNITURE: {
-                "keywords": ["chair", "table", "desk", "bed", "sofa", "couch", "furniture", "cabinet", 
-                           "shelf", "drawer", "bench", "stool", "wardrobe", "bookshelf"],
-                "descriptors": ["wooden", "metal", "comfortable", "ergonomic", "functional", "decorative"],
-                "actions": ["sitting", "lying", "resting", "storing", "supporting"],
-                "context_clues": ["room", "indoor", "home", "office", "comfort"]
-            },
-            TaskType.CREATE_OBJECT: {
-                "keywords": ["object", "item", "thing", "tool", "device", "gadget", "artifact", "prop",
-                           "box", "sphere", "cube", "cylinder", "cone", "pyramid"],
-                "descriptors": ["geometric", "mechanical", "electronic", "simple", "complex", "functional"],
-                "actions": ["create", "make", "build", "construct", "design", "model"],
-                "context_clues": ["shape", "form", "structure", "utility", "purpose"]
-            },
-            TaskType.CREATE_CLOTHING: {
-                "keywords": ["shirt", "pants", "dress", "clothing", "clothes", "hat", "shoes", "jacket",
-                           "garment", "outfit", "uniform", "costume", "fabric", "textile"],
-                "descriptors": ["wearable", "fashionable", "comfortable", "stylish", "protective"],
-                "actions": ["wearing", "dressing", "covering", "protecting"],
-                "context_clues": ["fashion", "style", "material", "fit", "size"]
-            },
-            TaskType.CREATE_ARCHITECTURE: {
-                "keywords": ["room", "house", "building", "wall", "floor", "ceiling", "door", "window",
-                           "structure", "architecture", "construction", "facility", "space"],
-                "descriptors": ["architectural", "structural", "spatial", "interior", "exterior"],
-                "actions": ["building", "constructing", "designing", "planning"],
-                "context_clues": ["indoor", "outdoor", "residential", "commercial", "public"]
-            },
-            TaskType.CREATE_ENVIRONMENT: {
-                "keywords": ["environment", "scene", "landscape", "background", "setting", "world",
-                           "terrain", "nature", "forest", "city", "ocean", "mountain"],
-                "descriptors": ["environmental", "atmospheric", "scenic", "natural", "urban"],
-                "actions": ["exploring", "inhabiting", "surrounding", "encompassing"],
-                "context_clues": ["location", "place", "area", "region", "atmosphere"]
-            },
-            TaskType.LIGHTING_SETUP: {
-                "keywords": ["light", "lighting", "illumination", "lamp", "brightness", "shadow",
-                           "glow", "shine", "beam", "ray", "sun", "moon", "fire"],
-                "descriptors": ["bright", "dim", "warm", "cool", "harsh", "soft", "dramatic"],
-                "actions": ["illuminating", "shining", "glowing", "casting", "reflecting"],
-                "context_clues": ["visibility", "mood", "atmosphere", "time", "weather"]
-            },
-            TaskType.MATERIAL_APPLICATION: {
-                "keywords": ["material", "texture", "color", "surface", "fabric", "wood", "metal", "glass",
-                           "plastic", "stone", "leather", "rubber", "paint", "finish"],
-                "descriptors": ["smooth", "rough", "shiny", "matte", "transparent", "opaque"],
-                "actions": ["applying", "coating", "covering", "finishing", "texturing"],
-                "context_clues": ["appearance", "feel", "quality", "aesthetic", "realistic"]
-            },
-            TaskType.SCENE_COMPOSITION: {
-                "keywords": ["pose", "position", "posture", "arrangement", "composition", "layout",
-                           "placement", "orientation", "angle", "perspective"],
-                "descriptors": ["positioned", "arranged", "composed", "balanced", "centered"],
-                "actions": ["sitting", "standing", "lying", "leaning", "positioning", "arranging"],
-                "context_clues": ["spatial", "relationship", "interaction", "proximity", "relative"]
-            },
-            TaskType.ANIMATION_SETUP: {
-                "keywords": ["animation", "movement", "motion", "animate", "sequence", "timeline",
-                           "keyframe", "transition", "dynamic", "kinetic"],
-                "descriptors": ["moving", "animated", "dynamic", "fluid", "smooth", "realistic"],
-                "actions": ["moving", "animating", "transitioning", "flowing", "changing"],
-                "context_clues": ["time", "sequence", "progression", "change", "evolution"]
-            }
-        }
-        
-        # Intent detection patterns for fallback
-        self.intent_patterns = {
-            "create": [TaskType.CREATE_OBJECT, TaskType.CREATE_CHARACTER],
-            "make": [TaskType.CREATE_OBJECT, TaskType.CREATE_FURNITURE],
-            "design": [TaskType.CREATE_ARCHITECTURE, TaskType.CREATE_ENVIRONMENT],
-            "build": [TaskType.CREATE_ARCHITECTURE, TaskType.CREATE_OBJECT],
-            "model": [TaskType.CREATE_CHARACTER, TaskType.CREATE_OBJECT],
-            "draw": [TaskType.CREATE_CHARACTER, TaskType.CREATE_OBJECT],
-            "render": [TaskType.LIGHTING_SETUP, TaskType.MATERIAL_APPLICATION],
-            "animate": [TaskType.ANIMATION_SETUP, TaskType.SCENE_COMPOSITION]
-        }
-        
-        # Complexity indicators
-        self.complexity_indicators = {
-            TaskComplexity.SIMPLE: [
-                'simple', 'basic', 'primitive', 'cube', 'sphere', 'cylinder',
-                'single', 'one', 'minimal'
-            ],
-            TaskComplexity.MODERATE: [
-                'detailed', 'realistic', 'textured', 'multiple', 'several',
-                'character', 'furniture', 'room'
-            ],
-            TaskComplexity.COMPLEX: [
-                'intricate', 'complex', 'advanced', 'professional', 'detailed scene',
-                'multiple characters', 'full environment', 'architectural'
-            ],
-            TaskComplexity.EXPERT: [
-                'photorealistic', 'cinematic', 'production-ready', 'highly detailed',
-                'studio quality', 'professional grade', 'film quality'
-            ]
-        }
-        
-        # Time estimation base (in minutes)
-        self.base_time_estimates = {
-            TaskType.CREATE_CHARACTER: 45,
-            TaskType.CREATE_OBJECT: 15,
-            TaskType.CREATE_FURNITURE: 25,
-            TaskType.CREATE_CLOTHING: 30,
-            TaskType.CREATE_ARCHITECTURE: 60,
-            TaskType.CREATE_ENVIRONMENT: 90,
-            TaskType.SCENE_COMPOSITION: 20,
-            TaskType.LIGHTING_SETUP: 15,
-            TaskType.MATERIAL_APPLICATION: 10,
-            TaskType.ANIMATION_SETUP: 40,
-            TaskType.POST_PROCESSING: 10
-        }
-        
-        # Complexity multipliers for time estimation
-        self.complexity_multipliers = {
-            TaskComplexity.SIMPLE: 0.5,
-            TaskComplexity.MODERATE: 1.0,
-            TaskComplexity.COMPLEX: 2.0,
-            TaskComplexity.EXPERT: 4.0
-        }
-    
-    async def plan(self, prompt: str) -> 'TaskPlan':
-        """Simple interface to generate a plan from a prompt string"""
-        from .models import PlannerInput
-        
-        input_data = PlannerInput(
-            agent_type=AgentType.PLANNER,
-            prompt=prompt,
-            user_id="test_user",
-            session_id="test_session"
-        )
-        
+            self.logger.warning("GEMINI_API_KEY not found. Planning will fail.")
+
+    async def plan(self, prompt: str) -> TaskPlan:
+        """Simple interface to generate a plan from a prompt string."""
+        input_data = PlannerInput(prompt=prompt)
         result = await self.process(input_data)
         if result.success and result.plan:
             return result.plan
         else:
             raise Exception(f"Planning failed: {result.message}")
-    
+
     async def process(self, input_data: PlannerInput) -> PlannerOutput:
-        """Process the planning request and generate structured subtasks"""
-        
+        """Processes the planning request by generating a structured TaskPlan using an LLM."""
         try:
-            self.logger.info(f"Planning for prompt: {input_data.prompt[:100]}...")
-            
-            # Step 1: Analyze the prompt
-            prompt_analysis = self._analyze_prompt(input_data.prompt)
-            
-            # Step 2: Extract entities and relationships
-            entities = self._extract_entities(input_data.prompt)
-            
-            # Step 3: Generate subtasks
-            subtasks = self._generate_subtasks(
-                prompt_analysis, entities, input_data
-            )
-            
-            # Step 4: Determine dependencies and execution order
-            execution_plan = self._plan_execution_order(subtasks)
-            
-            # Step 5: Create the complete task plan
-            task_plan = self._create_task_plan(
-                input_data.prompt, subtasks, execution_plan, prompt_analysis
-            )
-            
-            # Step 6: Generate alternative plans if requested
-            alternative_plans = []
-            if self.config.get('generate_alternatives', False):
-                alternative_plans = self._generate_alternative_plans(task_plan)
-            
+            self.logger.info(f"Generating plan for prompt: '{input_data.prompt[:100]}...'" )
+            if not self.llm_available:
+                raise Exception("LLM is not available. Cannot generate a plan.")
+
+            # STAGE 1: Generate a high-level plan in text from the LLM.
+            text_plan = await self._generate_text_plan_with_llm(input_data.prompt)
+
+            # STAGE 2: Convert the text-based plan into a structured JSON TaskPlan.
+            if text_plan.startswith("FALLBACK:"):
+                self.logger.warning("Generating fallback plan due to failure in text generation stage.")
+                task_plan = self._create_fallback_plan(input_data.prompt)
+            else:
+                task_plan = await self._convert_text_to_structured_plan(text_plan, input_data.prompt)
+                # Post-process: expand material steps into finer-grained subtasks
+                task_plan = self._expand_material_subtasks(task_plan)
+
             return PlannerOutput(
-                agent_type=AgentType.PLANNER,
+                agent_type=self.agent_type,
                 status=AgentStatus.COMPLETED,
                 success=True,
-                message=f"Successfully generated plan with {len(subtasks)} subtasks",
-                data={
-                    "prompt_analysis": prompt_analysis,
-                    "entities_found": len(entities),
-                    "total_subtasks": len(subtasks)
-                },
+                message=f"Successfully generated plan with {len(task_plan.subtasks)} subtasks.",
                 plan=task_plan,
-                alternative_plans=alternative_plans,
-                planning_rationale=self._generate_rationale(prompt_analysis, subtasks)
+                planning_rationale=text_plan
             )
-            
         except Exception as e:
             self.logger.error(f"Planning failed: {e}")
             return PlannerOutput(
-                agent_type=AgentType.PLANNER,
+                agent_type=self.agent_type,
                 status=AgentStatus.FAILED,
                 success=False,
-                message=f"Planning failed: {str(e)}",
+                message=str(e),
                 errors=[str(e)]
             )
-    
-    def _analyze_prompt(self, prompt: str) -> Dict[str, Any]:
-        """Analyze the prompt to understand intent and requirements using LLM or fallback"""
-        
-        if self.llm_available:
-            return self._analyze_prompt_with_llm(prompt)
-        else:
-            return self._analyze_prompt_fallback(prompt)
-    
-    def _analyze_prompt_with_llm(self, prompt: str) -> Dict[str, Any]:
-        """Use LLM to analyze natural language prompt"""
-        
-        analysis_prompt = f"""
-        Analyze this 3D modeling prompt and extract structured information:
-        
-        Prompt: "{prompt}"
-        
-        Please provide a JSON response with:
-        {{
-            "objects": ["list of objects to create"],
-            "materials": ["list of materials/colors mentioned"],
-            "actions": ["list of actions/verbs"],
-            "descriptors": ["list of adjectives/descriptors"],
-            "text_elements": ["any text/labels to add"],
-            "complexity": "SIMPLE|MODERATE|COMPLEX|EXPERT",
-            "primary_intent": "brief description of main goal"
-        }}
-        
-        Focus on identifying:
-        - Physical objects (mug, chair, house, etc.)
-        - Colors and materials (white, brown, metal, wood)
-        - Text or labels to be added
-        - Overall complexity level
-        """
-        
-        try:
-            model = genai.GenerativeModel('gemini-1.5-flash')
-            response = model.generate_content(analysis_prompt)
-            
-            # Parse JSON response with robust error handling
-            response_text = response.text.strip()
-            
-            # Remove code block markers
-            if response_text.startswith('```json'):
-                response_text = response_text[7:].strip()
-                if response_text.endswith('```'):
-                    response_text = response_text[:-3].strip()
-            elif response_text.startswith('```'):
-                response_text = response_text[3:].strip()
-                if response_text.endswith('```'):
-                    response_text = response_text[:-3].strip()
-            
-            # Find JSON content if wrapped in other text
-            json_start = response_text.find('{')
-            json_end = response_text.rfind('}') + 1
-            if json_start >= 0 and json_end > json_start:
-                response_text = response_text[json_start:json_end]
-            
-            llm_analysis = json.loads(response_text)
-            
-            # Validate required fields
-            required_fields = ['objects', 'materials', 'actions', 'descriptors', 'text_elements', 'complexity', 'primary_intent']
-            for field in required_fields:
-                if field not in llm_analysis:
-                    llm_analysis[field] = [] if field != 'complexity' and field != 'primary_intent' else ('MODERATE' if field == 'complexity' else 'create_3d_asset')
-            
-            # Convert to expected format
-            analysis = {
-                "original_prompt": prompt,
-                "word_count": len(prompt.split()),
-                "entities": llm_analysis.get("objects", []),
-                "actions": llm_analysis.get("actions", []),
-                "descriptors": llm_analysis.get("descriptors", []),
-                "materials": llm_analysis.get("materials", []),
-                "text_elements": llm_analysis.get("text_elements", []),
-                "spatial_relationships": [],
-                "estimated_complexity": getattr(TaskComplexity, llm_analysis.get("complexity", "MODERATE")),
-                "primary_intent": llm_analysis.get("primary_intent", "create_3d_asset")
-            }
-            
-            self.logger.info(f"LLM analysis successful: found {len(analysis['entities'])} objects")
-            return analysis
-            
-        except Exception as e:
-            self.logger.warning(f"LLM analysis failed: {e}, falling back to rule-based")
-            return self._analyze_prompt_fallback(prompt)
-    
-    def _analyze_prompt_fallback(self, prompt: str) -> Dict[str, Any]:
-        """Fallback rule-based prompt analysis"""
-        
-        prompt_lower = prompt.lower()
-        
-        analysis = {
-            "original_prompt": prompt,
-            "word_count": len(prompt.split()),
-            "entities": [],
-            "actions": [],
-            "descriptors": [],
-            "materials": [],
-            "text_elements": [],
-            "spatial_relationships": [],
-            "estimated_complexity": TaskComplexity.MODERATE,
-            "primary_intent": "create_3d_asset"
-        }
-        
-        # Extract descriptive words (adjectives, colors, materials)
-        descriptors = re.findall(r'\b(old|young|large|small|big|tiny|red|blue|green|yellow|white|brown|black|wooden|metal|glass|leather|fabric|smooth|rough|shiny|matte)\b', prompt_lower)
-        analysis["descriptors"] = list(set(descriptors))
-        
-        # Extract materials and colors
-        materials = re.findall(r'\b(wood|metal|glass|plastic|stone|leather|rubber|fabric|white|brown|black|red|blue|green|yellow)\b', prompt_lower)
-        analysis["materials"] = list(set(materials))
-        
-        # Extract common objects
-        objects = re.findall(r'\b(mug|cup|coffee|chair|table|desk|bed|sofa|house|room|car|bottle|bowl|plate|sphere|cube|cylinder)\b', prompt_lower)
-        analysis["entities"] = list(set(objects))
-        
-        # Extract text elements
-        text_matches = re.findall(r"'([^']+)'|\"([^\"]+)\"|text|label|writing", prompt_lower)
-        text_elements = [match[0] or match[1] for match in text_matches if match[0] or match[1]]
-        if 'text' in prompt_lower or 'label' in prompt_lower:
-            text_elements.append("text_element")
-        analysis["text_elements"] = text_elements
-        
-        # Extract actions and poses
-        actions = re.findall(r'\b(create|make|build|design|model|sitting|standing|walking|running|holding|wearing|looking)\b', prompt_lower)
-        analysis["actions"] = list(set(actions))
-        
-        # Extract spatial relationships
-        spatial_words = re.findall(r'\b(on|in|under|above|below|beside|next to|behind|in front of|near|far from)\b', prompt_lower)
-        analysis["spatial_relationships"] = list(set(spatial_words))
-        
-        # Determine complexity based on indicators
-        complexity_scores = {}
-        for complexity, indicators in self.complexity_indicators.items():
-            score = sum(1 for indicator in indicators if indicator in prompt_lower)
-            complexity_scores[complexity] = score
-        
-        # Choose complexity with highest score
-        if complexity_scores:
-            analysis["estimated_complexity"] = max(complexity_scores, key=complexity_scores.get)
-        
-        return analysis
-    
-    def _extract_entities(self, prompt: str, analysis: Dict[str, Any] = None) -> List[Dict[str, Any]]:
-        """Extract entities using LLM-enhanced analysis"""
-        
-        # Get analysis from LLM or fallback if not provided
-        if analysis is None:
-            analysis = self._analyze_prompt(prompt)
-        
-        entities = []
-        
-        # Convert analysis to entity format
-        for obj in analysis.get("entities", []):
-            entities.append({
-                "name": obj,
-                "type": "object",
-                "confidence": 0.9,
-                "source": "llm_analysis"
-            })
-        
-        # Add materials as entities
-        for material in analysis.get("materials", []):
-            entities.append({
-                "name": material,
-                "type": "material",
-                "confidence": 0.8,
-                "source": "llm_analysis"
-            })
-        
-        # Add text elements as entities
-        for text in analysis.get("text_elements", []):
-            entities.append({
-                "name": text,
-                "type": "text",
-                "confidence": 0.7,
-                "source": "llm_analysis"
-            })
-        
-        # If no entities found via LLM, fall back to semantic scoring
-        if not entities:
-            entities = self._extract_entities_fallback(prompt)
-        
-        return entities
-    
-    def _extract_entities_fallback(self, prompt: str) -> List[Dict[str, Any]]:
-        """Fallback entity extraction using semantic categories"""
-        
-        entities = []
-        prompt_lower = prompt.lower()
-        
-        # Score each task type based on semantic relevance
-        task_scores = {}
-        for task_type, categories in self.semantic_categories.items():
-            score = 0
-            matched_terms = []
-            
-            # Check keywords (highest weight)
-            for keyword in categories["keywords"]:
-                if keyword in prompt_lower:
-                    score += 3
-                    matched_terms.append(("keyword", keyword))
-            
-            # Check descriptors (medium weight)
-            for descriptor in categories["descriptors"]:
-                if descriptor in prompt_lower:
-                    score += 2
-                    matched_terms.append(("descriptor", descriptor))
-            
-            # Check actions (medium weight)
-            for action in categories["actions"]:
-                if action in prompt_lower:
-                    score += 2
-                    matched_terms.append(("action", action))
-            
-            # Check context clues (lower weight)
-            for clue in categories["context_clues"]:
-                if clue in prompt_lower:
-                    score += 1
-                    matched_terms.append(("context", clue))
-            
-            if score > 0:
-                task_scores[task_type] = {
-                    "score": score,
-                    "matched_terms": matched_terms,
-                    "confidence": min(score / 10.0, 1.0)  # Normalize to 0-1
-                }
-        
-        # Convert high-scoring task types to entities
-        for task_type, data in task_scores.items():
-            if data["confidence"] >= 0.3:  # Minimum confidence threshold
-                # Find the most relevant matched term for positioning
-                primary_term = data["matched_terms"][0][1] if data["matched_terms"] else ""
-                start_pos = prompt_lower.find(primary_term) if primary_term else 0
-                
-                entity = {
-                    "text": primary_term,
-                    "start": start_pos,
-                    "end": start_pos + len(primary_term),
-                    "task_type": task_type,
-                    "confidence": data["confidence"],
-                    "matched_terms": data["matched_terms"],
-                    "context": prompt[max(0, start_pos-20):start_pos+len(primary_term)+20]
-                }
-                entities.append(entity)
-        
-        # Fallback: Use intent patterns if no entities found
-        if not entities:
-            entities = self._extract_entities_by_intent(prompt_lower)
-        
-        # Fallback: Create generic object task if still no entities
-        if not entities:
-            entities = self._create_generic_entity(prompt)
-        
-        # Sort by confidence and position
-        entities.sort(key=lambda x: (-x.get("confidence", 0), x.get("start", 0)))
-        
-        return entities
-    
-    def _extract_entities_by_intent(self, prompt_lower: str) -> List[Dict[str, Any]]:
-        """Extract entities based on intent verbs when semantic analysis fails"""
-        
-        entities = []
-        
-        for intent_verb, possible_tasks in self.intent_patterns.items():
-            if intent_verb in prompt_lower:
-                # Choose the most likely task type based on context
-                task_type = possible_tasks[0]  # Default to first option
-                
-                # Try to refine based on additional context
-                if len(possible_tasks) > 1:
-                    for possible_task in possible_tasks:
-                        # Check if there are any weak indicators for this task
-                        categories = self.semantic_categories[possible_task]
-                        for keyword in categories["keywords"][:3]:  # Check top 3 keywords
-                            if keyword in prompt_lower:
-                                task_type = possible_task
-                                break
-                
-                start_pos = prompt_lower.find(intent_verb)
-                entity = {
-                    "text": intent_verb,
-                    "start": start_pos,
-                    "end": start_pos + len(intent_verb),
-                    "task_type": task_type,
-                    "confidence": 0.5,  # Medium confidence for intent-based detection
-                    "matched_terms": [("intent", intent_verb)],
-                    "context": prompt_lower[max(0, start_pos-20):start_pos+len(intent_verb)+20]
-                }
-                entities.append(entity)
-        
-        return entities
-    
-    def _create_generic_entity(self, prompt: str) -> List[Dict[str, Any]]:
-        """Create a generic entity when no specific entities are detected"""
-        
-        # Analyze prompt length and complexity to determine likely task type
-        word_count = len(prompt.split())
-        
-        if word_count <= 3:
-            # Very short prompts likely want simple objects
-            task_type = TaskType.CREATE_OBJECT
-        elif "scene" in prompt.lower() or word_count > 15:
-            # Long prompts or scene mentions likely want environments
-            task_type = TaskType.CREATE_ENVIRONMENT
-        else:
-            # Medium prompts default to object creation
-            task_type = TaskType.CREATE_OBJECT
-        
-        return [{
-            "text": "generic_3d_asset",
-            "start": 0,
-            "end": len(prompt),
-            "task_type": task_type,
-            "confidence": 0.3,  # Low confidence for generic detection
-            "matched_terms": [("generic", "fallback")],
-            "context": prompt[:50] + "..." if len(prompt) > 50 else prompt
-        }]
-    
-    def _generate_subtasks(self, analysis: Dict[str, Any], entities: List[Dict[str, Any]], input_data) -> List[SubTask]:
-        """Generate subtasks based on LLM-enhanced entity extraction"""
-        
-        subtasks = []
-        task_id_counter = 1
-        
-        # Enhanced entity processing based on LLM analysis
-        objects = [e for e in entities if e.get("type") == "object"]
-        materials = [e for e in entities if e.get("type") == "material"]
-        text_elements = [e for e in entities if e.get("type") == "text"]
-        
-        # Create object subtasks
-        for obj_entity in objects:
-            obj_name = obj_entity["name"]
-            subtask = SubTask(
-                task_id=f"task_{task_id_counter:03d}",
-                title=f"Create {obj_name.title()}",
-                description=f"Create {obj_name} using appropriate mesh primitives and modeling techniques",
-                type=TaskType.CREATE_OBJECT,
-                complexity=analysis.get("estimated_complexity", TaskComplexity.MODERATE),
-                priority=TaskPriority.HIGH,
-                estimated_time_minutes=self._estimate_time(TaskType.CREATE_OBJECT, analysis["estimated_complexity"]),
-                dependencies=[]
-            )
-            subtasks.append(subtask)
-            task_id_counter += 1
-        
-        # Create material application subtask if materials or colors detected
-        if materials or analysis.get("materials", []):
-            all_materials = materials + [{"name": m, "type": "material"} for m in analysis.get("materials", [])]
-            material_names = list(set([m["name"] for m in all_materials]))
-            
-            subtask = SubTask(
-                task_id=f"task_{task_id_counter:03d}",
-                title="Apply Materials and Colors",
-                description=f"Apply materials, colors, and textures: {', '.join(material_names)}",
-                type=TaskType.MATERIAL_APPLICATION,
-                complexity=TaskComplexity.MODERATE,
-                priority=TaskPriority.MEDIUM,
-                estimated_time_minutes=self._estimate_time(TaskType.MATERIAL_APPLICATION, TaskComplexity.MODERATE),
-                dependencies=[f"task_{i:03d}" for i in range(1, task_id_counter)]
-            )
-            subtasks.append(subtask)
-            task_id_counter += 1
-        
-        # Create text application subtask if text elements detected
-        if text_elements or analysis.get("text_elements", []):
-            all_text = text_elements + [{"name": t, "type": "text"} for t in analysis.get("text_elements", [])]
-            text_names = list(set([t["name"] for t in all_text if t["name"] != "text_element"]))
-            
-            if text_names:
-                subtask = SubTask(
-                    task_id=f"task_{task_id_counter:03d}",
-                    title="Add Text Elements",
-                    description=f"Add text elements: {', '.join(text_names)}",
-                    type=TaskType.MATERIAL_APPLICATION,  # Text is handled as material/texture
-                    complexity=TaskComplexity.MODERATE,
-                    priority=TaskPriority.MEDIUM,
-                    estimated_time_minutes=10,
-                    dependencies=[f"task_{i:03d}" for i in range(1, task_id_counter)]
-                )
-                subtasks.append(subtask)
-                task_id_counter += 1
-        
-        # Add scene composition if multiple objects or complex scene
-        if len(objects) > 1 or analysis.get("estimated_complexity") in [TaskComplexity.COMPLEX, TaskComplexity.EXPERT]:
-            subtask = SubTask(
-                task_id=f"task_{task_id_counter:03d}",
-                title="Compose Scene",
-                description="Arrange and compose the final scene",
-                type=TaskType.SCENE_COMPOSITION,
-                complexity=TaskComplexity.SIMPLE,
-                priority=TaskPriority.LOW,
-                estimated_time_minutes=5,
-                dependencies=[f"task_{i:03d}" for i in range(1, task_id_counter)]
-            )
-            subtasks.append(subtask)
-            task_id_counter += 1
-        
-        # Ensure we have at least one subtask - fallback for unrecognized prompts
-        if not subtasks:
-            # Use LLM analysis to create a more specific default task
-            primary_intent = analysis.get("primary_intent", "create 3D asset")
-            subtask = SubTask(
-                task_id="task_001",
-                title=f"Create Asset: {primary_intent}",
-                description=f"Create the requested asset based on prompt: {analysis['original_prompt']}",
-                type=TaskType.CREATE_OBJECT,
-                complexity=analysis.get("estimated_complexity", TaskComplexity.MODERATE),
-                priority=TaskPriority.HIGH,
-                estimated_time_minutes=15,
-                dependencies=[]
-            )
-            subtasks.append(subtask)
-        
-        return subtasks
 
-    def _create_character_subtask(
-        self,
-        task_id: int, 
-        entities: List[Dict[str, Any]], 
-        analysis: Dict[str, Any]
-    ) -> SubTask:
-        """Create granular subtask for character creation with specific Blender operations"""
-        
-        entity_texts = [entity["text"] for entity in entities]
-        descriptors = analysis.get("descriptors", [])
-        actions = analysis.get("actions", [])
-        
-        # Determine if character is sitting (affects mesh operations)
-        is_sitting = any(action in ["sitting"] for action in actions)
-        
-        # Create granular, Blender-specific requirements
-        granular_requirements = [
-            "add_cube_primitive_for_torso",
-            "scale_torso_to_human_proportions", 
-            "add_sphere_primitive_for_head",
-            "position_head_above_torso",
-            "add_cylinder_primitives_for_arms",
-            "add_cylinder_primitives_for_legs",
-        ]
-        
-        if is_sitting:
-            granular_requirements.extend([
-                "rotate_legs_90_degrees_for_sitting",
-                "position_legs_for_chair_sitting",
-                "adjust_torso_angle_for_sitting_posture"
-            ])
-        
-        # Specific mesh operations that Coordinator can map to APIs
-        specific_mesh_operations = [
-            "mesh.primitive_cube_add",      # For torso
-            "mesh.primitive_uv_sphere_add", # For head  
-            "mesh.primitive_cylinder_add",  # For limbs
-            "transform.resize",             # For scaling
-            "transform.translate",          # For positioning
-            "transform.rotate"              # For posing
-        ]
-        
-        return SubTask(
-            task_id=f"task_{task_id:03d}",
-            type=TaskType.CREATE_CHARACTER,
-            title="Add Basic Human Mesh Primitives",
-            description=f"Create basic human figure using Blender primitives: cube for torso, sphere for head, cylinders for limbs. {'Configure for sitting pose.' if is_sitting else 'Configure for standing pose.'}",
-            requirements=granular_requirements,
-            estimated_time_minutes=self._estimate_time(
-                TaskType.CREATE_CHARACTER, analysis["estimated_complexity"]
-            ),
-            complexity=analysis["estimated_complexity"],
-            priority=TaskPriority.HIGH,
-            blender_categories=["mesh_operators", "object_operators"],
-            mesh_operations=specific_mesh_operations,
-            object_count=4,  # torso, head, 2 arms, 2 legs = 6, but simplified to 4 main parts
-            context={
-                "character_type": entity_texts[0] if entity_texts else "person",
-                "descriptors": descriptors,
-                "actions": actions,
-                "pose_type": "sitting" if is_sitting else "standing",
-                "primitive_approach": True,
-                "specific_apis_needed": [
-                    "bpy.ops.mesh.primitive_cube_add",
-                    "bpy.ops.mesh.primitive_uv_sphere_add", 
-                    "bpy.ops.mesh.primitive_cylinder_add",
-                    "bpy.ops.transform.resize",
-                    "bpy.ops.transform.translate",
-                    "bpy.ops.transform.rotate"
-                ]
-            }
-        )
-    
-    def _create_furniture_subtask(
-        self, 
-        task_id: int, 
-        entity: Dict[str, Any], 
-        analysis: Dict[str, Any]
-    ) -> SubTask:
-        """Create granular subtask for furniture creation with specific Blender operations"""
-        
-        furniture_type = entity["text"]
-        descriptors = analysis.get("descriptors", [])
-        
-        # Create granular, Blender-specific requirements for chair
-        if "chair" in furniture_type.lower():
-            granular_requirements = [
-                "add_cube_primitive_for_seat",
-                "scale_seat_to_chair_proportions",
-                "add_cube_primitive_for_backrest", 
-                "position_backrest_behind_seat",
-                "add_cylinder_primitives_for_legs",
-                "position_four_legs_under_seat"
-            ]
-            specific_mesh_operations = [
-                "mesh.primitive_cube_add",      # For seat and backrest
-                "mesh.primitive_cylinder_add",  # For legs
-                "transform.resize",             # For scaling parts
-                "transform.translate",          # For positioning
-                "object.duplicate"              # For creating multiple legs
-            ]
-        else:
-            # Generic furniture approach
-            granular_requirements = [
-                "add_cube_primitive_for_base",
-                "scale_base_to_furniture_proportions",
-                "add_additional_structural_elements"
-            ]
-            specific_mesh_operations = [
-                "mesh.primitive_cube_add",
-                "transform.resize", 
-                "transform.translate"
-            ]
-        
-        return SubTask(
-            task_id=f"task_{task_id:03d}",
-            type=TaskType.CREATE_FURNITURE,
-            title=f"Add {furniture_type.title()} Using Mesh Primitives",
-            description=f"Create {furniture_type} using Blender mesh primitives. {'Add seat, backrest, and 4 legs using cubes and cylinders.' if 'chair' in furniture_type.lower() else f'Create {furniture_type} structure using basic shapes.'}",
-            requirements=granular_requirements,
-            estimated_time_minutes=self._estimate_time(
-                TaskType.CREATE_FURNITURE, analysis["estimated_complexity"]
-            ),
-            complexity=analysis["estimated_complexity"],
-            priority=TaskPriority.MEDIUM,
-            blender_categories=["mesh_operators", "object_operators"],
-            mesh_operations=specific_mesh_operations,
-            object_count=5 if "chair" in furniture_type.lower() else 1,  # seat + backrest + 4 legs = 6, simplified to 5
-            context={
-                "furniture_type": furniture_type,
-                "descriptors": descriptors,
-                "style": "realistic",
-                "primitive_approach": True,
-                "specific_apis_needed": [
-                    "bpy.ops.mesh.primitive_cube_add",
-                    "bpy.ops.mesh.primitive_cylinder_add",
-                    "bpy.ops.transform.resize",
-                    "bpy.ops.transform.translate",
-                    "bpy.ops.object.duplicate"
-                ]
-            }
-        )
-    
-    def _create_clothing_subtask(
-        self, 
-        task_id: int, 
-        entities: List[Dict[str, Any]], 
-        analysis: Dict[str, Any]
-    ) -> SubTask:
-        """Create subtask for clothing creation"""
-        
-        clothing_items = [e["text"] for e in entities]
-        descriptors = analysis.get("descriptors", [])
-        
-        return SubTask(
-            task_id=f"task_{task_id:03d}",
-            type=TaskType.CREATE_CLOTHING,
-            title=f"Create Clothing: {', '.join(clothing_items)}",
-            description=f"Create clothing items with properties: {', '.join(descriptors)}",
-            requirements=[
-                "character_base_mesh",
-                "clothing_topology",
-                "fabric_simulation"
-            ],
-            dependencies=["task_001"],  # Depends on character creation
-            estimated_time_minutes=self._estimate_time(
-                TaskType.CREATE_CLOTHING, analysis["estimated_complexity"]
-            ),
-            complexity=analysis["estimated_complexity"],
-            priority=TaskPriority.MEDIUM,
-            blender_categories=["mesh_operators", "geometry_nodes"],
-            mesh_operations=["duplicate", "separate", "solidify", "cloth_simulation"],
-            object_count=len(clothing_items),
-            context={
-                "clothing_items": clothing_items,
-                "descriptors": descriptors,
-                "fit_type": "realistic"
-            }
-        )
-    
-    def _create_lighting_subtask(
-        self, 
-        task_id: int, 
-        entities: List[Dict[str, Any]], 
-        analysis: Dict[str, Any]
-    ) -> SubTask:
-        """Create subtask for lighting setup"""
-        
-        return SubTask(
-            task_id=f"task_{task_id:03d}",
-            type=TaskType.LIGHTING_SETUP,
-            title="Setup Scene Lighting",
-            description="Configure lighting for the scene with appropriate mood and visibility",
-            requirements=[
-                "scene_objects",
-                "lighting_setup",
-                "shadow_configuration"
-            ],
-            estimated_time_minutes=self._estimate_time(
-                TaskType.LIGHTING_SETUP, analysis["estimated_complexity"]
-            ),
+    async def _generate_text_plan_with_llm(self, prompt: str) -> str:
+        """Generates a high-level text plan using the LLM, with robust error handling."""
+        planning_prompt = self._create_planning_prompt(prompt)
+        try:
+            model = genai.GenerativeModel('gemini-2.5-flash')
+            await self._rate_limiter.acquire()
+            response = await model.generate_content_async(planning_prompt)
+            self.logger.info("Successfully generated text plan from LLM.")
+            return response.text.strip()
+        except google_exceptions.GoogleAPICallError as e:
+            self.logger.error(f"Gemini API call failed during text plan generation: {e.message}", exc_info=True)
+            return f"FALLBACK: {e.message}"
+        except Exception as e:
+            self.logger.error(f"An unexpected error occurred during text plan generation: {e}", exc_info=True)
+            return f"FALLBACK: {str(e)}"
+
+    def _create_fallback_plan(self, prompt: str) -> TaskPlan:
+        """Creates a single, generic subtask when the LLM fails."""
+        self.logger.warning(f"Creating a generic fallback plan for prompt: {prompt}")
+        fallback_subtask = SubTask(
+            task_id="task_001",
+            title="Generic Asset Creation",
+            description=f"Create a generic 3D asset based on the prompt: '{prompt}'.",
+            type=TaskType.CREATE_OBJECT,
             complexity=TaskComplexity.MODERATE,
-            priority=TaskPriority.MEDIUM,
-            blender_categories=["object_operators"],
-            mesh_operations=["light_add", "sun_add", "area_light_add"],
-            object_count=3,
-            context={
-                "lighting_type": "three_point",
-                "mood": "natural",
-                "shadows": True
-            }
-        )
-    
-    def _create_composition_subtask(
-        self, 
-        task_id: int, 
-        analysis: Dict[str, Any], 
-        existing_subtasks: List[SubTask]
-    ) -> SubTask:
-        """Create subtask for scene composition"""
-        
-        dependencies = [task.task_id for task in existing_subtasks]
-        spatial_relationships = analysis.get("spatial_relationships", [])
-        actions = analysis.get("actions", [])
-        
-        return SubTask(
-            task_id=f"task_{task_id:03d}",
-            type=TaskType.SCENE_COMPOSITION,
-            title="Compose Scene",
-            description=f"Arrange objects and characters with relationships: {', '.join(spatial_relationships + actions)}",
-            requirements=[
-                "all_objects_created",
-                "spatial_positioning",
-                "pose_setup"
-            ],
-            dependencies=dependencies,
-            estimated_time_minutes=self._estimate_time(
-                TaskType.SCENE_COMPOSITION, analysis["estimated_complexity"]
-            ),
-            complexity=analysis["estimated_complexity"],
             priority=TaskPriority.HIGH,
-            blender_categories=["object_operators"],
-            mesh_operations=["transform", "rotate", "scale", "constraint_add"],
-            object_count=0,  # Modifies existing objects
-            context={
-                "spatial_relationships": spatial_relationships,
-                "actions": actions,
-                "composition_style": "realistic"
-            }
+            estimated_time_minutes=15,
+            dependencies=[]
         )
-    
-    def _create_material_subtask(
-        self, 
-        task_id: int, 
-        analysis: Dict[str, Any]
-    ) -> SubTask:
-        """Create subtask for material application"""
-        
-        descriptors = analysis.get("descriptors", [])
-        
-        return SubTask(
-            task_id=f"task_{task_id:03d}",
-            type=TaskType.MATERIAL_APPLICATION,
-            title="Apply Materials and Textures",
-            description=f"Apply materials with properties: {', '.join(descriptors)}",
-            requirements=[
-                "all_objects_created",
-                "material_setup",
-                "texture_application"
-            ],
-            estimated_time_minutes=self._estimate_time(
-                TaskType.MATERIAL_APPLICATION, analysis["estimated_complexity"]
-            ),
-            complexity=analysis["estimated_complexity"],
-            priority=TaskPriority.LOW,
-            blender_categories=["shader_nodes"],
-            mesh_operations=["material_new", "texture_add", "node_setup"],
-            object_count=0,  # Applies to existing objects
-            context={
-                "material_types": descriptors,
-                "style": "realistic",
-                "pbr_workflow": True
-            }
-        )
-    
-    def _estimate_time(self, task_type: TaskType, complexity: TaskComplexity) -> int:
-        """Estimate time for a subtask based on type and complexity"""
-        
-        base_time = self.base_time_estimates.get(task_type, 20)
-        multiplier = self.complexity_multipliers.get(complexity, 1.0)
-        
-        return int(base_time * multiplier)
-    
-    def _plan_execution_order(self, subtasks: List[SubTask]) -> Dict[str, Any]:
-        """Determine optimal execution order and parallel groups"""
-        
-        # Build dependency graph
-        dependency_graph = {}
-        for task in subtasks:
-            dependency_graph[task.task_id] = task.dependencies
-        
-        # Topological sort for execution order
-        execution_order = []
-        remaining_tasks = set(task.task_id for task in subtasks)
-        
-        while remaining_tasks:
-            # Find tasks with no remaining dependencies
-            ready_tasks = []
-            for task_id in remaining_tasks:
-                deps = dependency_graph[task_id]
-                if all(dep not in remaining_tasks for dep in deps):
-                    ready_tasks.append(task_id)
-            
-            if not ready_tasks:
-                # Circular dependency - break it
-                ready_tasks = [list(remaining_tasks)[0]]
-            
-            # Add ready tasks to execution order
-            execution_order.extend(ready_tasks)
-            remaining_tasks -= set(ready_tasks)
-        
-        # Identify parallel groups (tasks that can run simultaneously)
-        parallel_groups = []
-        current_group = []
-        
-        for task_id in execution_order:
-            task = next(t for t in subtasks if t.task_id == task_id)
-            
-            # Check if this task can run in parallel with current group
-            can_parallel = True
-            for group_task_id in current_group:
-                group_task = next(t for t in subtasks if t.task_id == group_task_id)
-                
-                # Can't parallel if there's a dependency
-                if (task_id in group_task.dependencies or 
-                    group_task_id in task.dependencies):
-                    can_parallel = False
-                    break
-                
-                # Can't parallel if both modify the same object type
-                if (task.type == group_task.type and 
-                    task.type in [TaskType.CREATE_CHARACTER, TaskType.CREATE_FURNITURE]):
-                    can_parallel = False
-                    break
-            
-            if can_parallel and len(current_group) < 3:  # Max 3 parallel tasks
-                current_group.append(task_id)
-            else:
-                if current_group:
-                    parallel_groups.append(current_group)
-                current_group = [task_id]
-        
-        if current_group:
-            parallel_groups.append(current_group)
-        
-        return {
-            "execution_order": execution_order,
-            "parallel_groups": parallel_groups,
-            "dependency_graph": dependency_graph
-        }
-    
-    def _create_task_plan(
-        self, 
-        prompt: str, 
-        subtasks: List[SubTask], 
-        execution_plan: Dict[str, Any],
-        analysis: Dict[str, Any]
-    ) -> TaskPlan:
-        """Create the complete task plan"""
-        
-        total_time = sum(task.estimated_time_minutes for task in subtasks)
-        
-        # Generate summary
-        task_types = list(set(task.type for task in subtasks))
-        summary = f"3D asset generation with {len(subtasks)} subtasks: {', '.join([t.value for t in task_types])}"
-        
-        # Generate tags
-        tags = []
-        tags.extend(analysis.get("descriptors", []))
-        tags.extend([t.value for t in task_types])
-        tags = list(set(tags))
-        
         return TaskPlan(
             plan_id=str(uuid.uuid4()),
             original_prompt=prompt,
-            summary=summary,
-            subtasks=subtasks,
-            total_estimated_time=total_time,
-            overall_complexity=analysis["estimated_complexity"],
-            tags=tags,
-            execution_order=execution_plan["execution_order"],
-            parallel_groups=execution_plan["parallel_groups"]
+            summary="Generic fallback plan",
+            subtasks=[fallback_subtask],
+            total_estimated_time=15,
+            overall_complexity=TaskComplexity.MODERATE,
+            tags=["fallback"]
         )
-    
-    def _generate_alternative_plans(self, main_plan: TaskPlan) -> List[TaskPlan]:
-        """Generate alternative plans with different approaches"""
-        # For now, return empty list - can be enhanced later
-        return []
-    
-    def _generate_rationale(
-        self, 
-        analysis: Dict[str, Any], 
-        subtasks: List[SubTask]
-    ) -> str:
-        """Generate explanation of planning decisions"""
+
+    def _create_planning_prompt(self, prompt: str) -> str:
+        return f"""You are a master 3D artist and project planner. Your task is to decompose a user's request into a detailed, step-by-step plan. Output only the plan as a numbered list. Do not generate JSON.
+
+**Chain of Thought Instructions:**
+1.  **Deconstruct**: Break the user's request into its core components (e.g., a 'house' has 'walls' and a 'roof').
+2.  **Sequence**: Determine the logical order of creation. You must build the base before adding details.
+3.  **Specify Actions**: For each step, specify the action, like 'Create', 'Apply Material', 'Add Text'.
+4.  **Describe Details**: Include all details from the prompt, like colors, textures, and text content.
+5.  **ONE TEXT OBJECT**: If the prompt includes text, create ONLY ONE subtask for text. Include creation, positioning, rotation, and color in that SINGLE subtask. Never create multiple text subtasks.
+
+**IMPORTANT - Choose Correct Shapes:**
+- Coffee mug / Cup → Use CYLINDER for the body
+- Ball / Balloon / Sphere → Use SPHERE
+- Box / Container / Crate → Use CUBE
+- Handle / Ring → Use TORUS
+- Table leg / Pipe → Use CYLINDER
+- Cone / Pyramid tip → Use CONE
+
+**CRITICAL - Text Positioning on Cylindrical Objects (Mugs, Cups, etc.):**
+When adding text to a cylindrical object like a mug:
+1. Position the text OUTSIDE the cylinder, not at the center
+2. Calculate position: cylinder_radius + text_offset (e.g., radius + 0.1)
+3. Rotate the text to face outward (90 degrees from cylinder axis)
+4. The text should appear like a sticker/decal on the outer surface
+5. For a vertical cylinder (mug), position text at mid-height and offset from center along X or Y axis
+
+**Example positioning for text on mug:**
+- Mug radius: 0.5
+- Text position: (0.6, 0, 0.5) ← Outside the mug, on the outer surface
+- Text rotation: Facing outward toward viewer
+
+**Example 1:**
+
+*   **User Prompt**: 'A wooden table with a book on it'
+*   **Your Output**:
+    1.  Create a flat, wide cube for the tabletop.
+    2.  Create four long, thin cylinders for the table legs and position them under the tabletop.
+    3.  Create a small, flat cube for the main body of the book.
+    4.  Place the book object on top of the table object.
+    5.  Apply a dark wood texture to the tabletop and legs.
+
+**Example 2:**
+
+*   **User Prompt**: 'A white coffee mug with "Coffee" text in brown'
+*   **Your Output**:
+    1.  Create a CYLINDER for the mug body (coffee mugs are cylindrical!).
+    2.  Create a TORUS for the handle and position it on the side of the cylinder.
+    3.  Apply white color to both the mug body and handle.
+    4.  Create ONE text object with content "Coffee", positioned OUTSIDE the cylinder at (radius + 0.1), rotated to face outward, and colored brown.
+
+**CRITICAL: For text on objects, create ONLY ONE subtask that includes creation, positioning, rotation, AND color. Do NOT create separate subtasks for each step.**
+
+**Example 3:**
+
+*   **User Prompt**: 'A red cricket ball'
+*   **Your Output**:
+    1.  Create a SPHERE for the ball.
+    2.  Apply red color to the sphere.
+    3.  Optionally add seam details if needed.
+
+**Your Task:**
+
+Now, generate a step-by-step text plan for the following user prompt. Remember to use the correct shape primitives!
+
+**Prompt**: "{prompt}"""
+
+    async def _convert_text_to_structured_plan(self, text_plan: str, original_prompt: str) -> TaskPlan:
+        """Converts a text-based plan from the LLM into a structured TaskPlan JSON object."""
         
-        rationale_parts = []
-        
-        # Complexity rationale
-        complexity = analysis["estimated_complexity"]
-        rationale_parts.append(
-            f"Estimated complexity as {complexity.value} based on prompt analysis."
-        )
-        
-        # Task breakdown rationale
-        task_types = list(set(task.type for task in subtasks))
-        rationale_parts.append(
-            f"Identified {len(task_types)} main task categories: {', '.join([t.value for t in task_types])}."
-        )
-        
-        # Dependencies rationale
-        dependent_tasks = [t for t in subtasks if t.dependencies]
-        if dependent_tasks:
-            rationale_parts.append(
-                f"Established dependencies for {len(dependent_tasks)} tasks to ensure proper execution order."
+        # Dynamically generate the list of valid TaskType enum values.
+        valid_task_types = " | ".join([t.value for t in TaskType])
+
+        conversion_prompt = f"""You are a JSON formatting expert. Convert the following step-by-step text plan into a valid JSON `TaskPlan` object. Assign a `task_id`, `title`, `description`, and `type` for each step. The `type` must be one of the following values: [{valid_task_types}]. Infer dependencies correctly.
+
+**Text Plan:**
+{text_plan}
+
+**JSON Output Format:**
+```json
+{{
+    "plan_id": "...",
+    "prompt": "{original_prompt}",
+    "subtasks": [
+        {{
+            "task_id": "task_001",
+            "title": "...",
+            "description": "...",
+            "type": "{valid_task_types}",
+            "dependencies": []
+        }}
+    ]
+}}
+```
+"""
+        try:
+            model = genai.GenerativeModel('gemini-2.5-flash')
+            response = await model.generate_content_async(conversion_prompt)
+            response_text = response.text.strip()
+
+            json_start = response_text.find('{')
+            json_end = response_text.rfind('}') + 1
+            if json_start == -1 or json_end == 0:
+                raise ValueError("No valid JSON object found in the LLM response during conversion.")
+            json_str = response_text[json_start:json_end]
+            
+            plan_data = json.loads(json_str)
+
+            # CRITICAL FIX: Convert the 'type' field to lowercase to match the Pydantic enum.
+            subtask_data = plan_data.get('subtasks', [])
+            for st in subtask_data:
+                if 'type' in st and isinstance(st['type'], str):
+                    st['type'] = st['type'].lower()
+
+            subtasks = [SubTask(**st) for st in subtask_data]
+            return TaskPlan(
+                plan_id=plan_data.get('plan_id', str(uuid.uuid4())),
+                original_prompt=original_prompt,
+                summary=f"Plan for '{original_prompt}' with {len(subtasks)} steps.",
+                subtasks=subtasks,
+                total_estimated_time=15 * len(subtasks), # Simple estimation
+                overall_complexity=TaskComplexity.MODERATE,
+                tags=[]
             )
-        
-        # Time estimation rationale
-        total_time = sum(task.estimated_time_minutes for task in subtasks)
-        rationale_parts.append(
-            f"Total estimated time: {total_time} minutes based on task complexity and type."
-        )
-        
-        return " ".join(rationale_parts)
+        except google_exceptions.GoogleAPICallError as e:
+            self.logger.error(f"Gemini API call failed during JSON conversion: {e.message}", exc_info=True)
+            return self._create_fallback_plan(original_prompt)
+        except Exception as e:
+            self.logger.error(f"Failed to convert text plan to JSON: {e}", exc_info=True)
+            return self._create_fallback_plan(original_prompt)
+
+    def _expand_material_subtasks(self, plan: TaskPlan) -> TaskPlan:
+        """Split any 'Apply material' subtask into finer-grained steps to improve API mapping.
+        Rules:
+        - Detect subtasks whose title/description references material/shader/color/colour
+        - Replace each such subtask with 4 micro-steps:
+          1) Ensure target object selected/active
+          2) Create or reuse material and enable nodes
+          3) Configure Principled BSDF base color/roughness/specular
+          4) Assign material to object's material slots
+        Dependencies are chained sequentially and respect original dependencies.
+        """
+        try:
+            from .models import SubTask, TaskType, TaskComplexity, TaskPriority
+            new_subtasks = []
+            id_counter = 1
+            for st in plan.subtasks:
+                text = f"{st.title} {st.description}".lower()
+                if any(k in text for k in ["apply material", "material", "shader", "colour", "color"]):
+                    base_prefix = st.task_id.rsplit("_", 1)[0] if "_" in st.task_id else st.task_id
+                    # Derive object name hint, if present
+                    obj_hint = "object"
+                    if "cone" in text:
+                        obj_hint = "cone"
+                    elif "mug" in text:
+                        obj_hint = "mug"
+
+                    s1 = SubTask(
+                        task_id=f"{base_prefix}_mat_{id_counter:03d}",
+                        title=f"Select and activate {obj_hint} object",
+                        description=f"Deselect all, select the {obj_hint} by name, and set it active for material assignment.",
+                        type=TaskType.MATERIAL_APPLICATION,
+                        complexity=st.complexity,
+                        priority=TaskPriority.HIGH,
+                        estimated_time_minutes=1,
+                        dependencies=st.dependencies,
+                    ); id_counter += 1
+                    s2 = SubTask(
+                        task_id=f"{base_prefix}_mat_{id_counter:03d}",
+                        title=f"Create/reuse material and enable nodes",
+                        description=f"Create a material named based on the {obj_hint} (e.g., '{obj_hint.capitalize()}Mat') and set use_nodes=True.",
+                        type=TaskType.MATERIAL_APPLICATION,
+                        complexity=st.complexity,
+                        priority=TaskPriority.HIGH,
+                        estimated_time_minutes=1,
+                        dependencies=[s1.task_id],
+                    ); id_counter += 1
+                    s3 = SubTask(
+                        task_id=f"{base_prefix}_mat_{id_counter:03d}",
+                        title=f"Configure Principled BSDF parameters",
+                        description=f"Set Base Color, Roughness, and Specular on the Principled BSDF node to match the prompt.",
+                        type=TaskType.MATERIAL_APPLICATION,
+                        complexity=st.complexity,
+                        priority=TaskPriority.HIGH,
+                        estimated_time_minutes=1,
+                        dependencies=[s2.task_id],
+                    ); id_counter += 1
+                    s4 = SubTask(
+                        task_id=f"{base_prefix}_mat_{id_counter:03d}",
+                        title=f"Assign material to {obj_hint}",
+                        description=f"Assign the material to the object's material slots (append or replace index 0).",
+                        type=TaskType.MATERIAL_APPLICATION,
+                        complexity=st.complexity,
+                        priority=TaskPriority.HIGH,
+                        estimated_time_minutes=1,
+                        dependencies=[s3.task_id],
+                    ); id_counter += 1
+                    new_subtasks.extend([s1, s2, s3, s4])
+                else:
+                    new_subtasks.append(st)
+            plan.subtasks = new_subtasks
+            return plan
+        except Exception:
+            # If anything goes wrong, return the original plan unchanged
+            return plan

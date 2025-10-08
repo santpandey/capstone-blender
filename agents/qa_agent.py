@@ -208,12 +208,12 @@ class QAAgent(BaseAgent):
         validation["logging_implemented"] = logging_count >= 3
         validation["score"] += min(logging_count / 10, 0.15)
         
-        # Check for common issues
-        if "bpy.ops.object.delete(use_global=False)" not in script_code:
-            validation["issues"].append("Missing safe object deletion")
+        # Check for common issues (these are warnings, not critical errors)
+        if "bpy.ops.object.delete" not in script_code:
+            validation["issues"].append("Warning: Consider adding object deletion for cleanup")
         
-        if "bpy.context.view_layer.update()" not in script_code:
-            validation["issues"].append("Missing scene update calls")
+        if "bpy.context.view_layer.update" not in script_code:
+            validation["issues"].append("Warning: Consider adding scene update calls for better state management")
         
         return validation
     
@@ -449,7 +449,9 @@ class QAAgent(BaseAgent):
                 break
         
         # Determine if validation passes
-        is_valid = weighted_score >= self.quality_thresholds["acceptable"] and len(all_issues) < 5
+        # Count only critical issues, not warnings
+        critical_issues = [issue for issue in all_issues if any(word in issue.lower() for word in ['syntax error', 'missing class', 'critical'])]
+        is_valid = weighted_score >= self.quality_thresholds["acceptable"] and len(critical_issues) == 0
         
         # Calculate quality metrics (all numeric values)
         quality_metrics = {

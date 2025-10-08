@@ -100,19 +100,8 @@ async function generateAsset() {
             // Handle JSON response with status updates
             const data = await response.json();
             
-            if (data.success && data.model_url) {
-                // Model generation completed
-                const modelViewer = document.getElementById('modelViewer');
-                modelViewer.src = data.model_url;
-                currentModelUrl = data.model_url;
-                
-                toggleClass('loading', 'show', false);
-                showElement('modelViewer', true);
-                toggleClass('downloadBtn', 'show', true);
-                updateStatus('✅ 3D asset generated successfully!', 'success');
-                
-            } else if (data.status === 'processing') {
-                // Still processing, poll for updates
+            if (data.success && data.job_id) {
+                // Job started successfully, begin polling
                 updateStatus('🔄 ' + (data.message || 'Generating 3D model...'), 'processing');
                 setTimeout(() => pollStatus(data.job_id), 2000);
                 
@@ -142,15 +131,34 @@ async function pollStatus(jobId) {
         const response = await fetch(`${API_BASE_URL}/status/${jobId}`);
         const data = await response.json();
         
-        if (data.status === 'completed' && data.model_url) {
-            const modelViewer = document.getElementById('modelViewer');
-            modelViewer.src = data.model_url;
-            currentModelUrl = data.model_url;
+        if (data.status === 'completed') {
+            // Check if we have a model_url (docker mode) or just script generation (local mode)
+            if (data.model_url) {
+                // Build full URL for the model
+                const fullModelUrl = data.model_url.startsWith('http') 
+                    ? data.model_url 
+                    : `${API_BASE_URL}${data.model_url}`;
+                
+                // Docker mode - show 3D viewer
+                const modelViewer = document.getElementById('modelViewer');
+                modelViewer.src = fullModelUrl;
+                currentModelUrl = fullModelUrl;
+                
+                toggleClass('loading', 'show', false);
+                showElement('modelViewer', true);
+                toggleClass('downloadBtn', 'show', true);
+                updateStatus('✅ 3D asset generated successfully!', 'success');
+            } else {
+                // Local mode - script generated but no GLB
+                toggleClass('loading', 'show', false);
+                showElement('placeholder', true);
+                updateStatus('✅ Script generated! ' + data.message, 'success');
+            }
             
-            toggleClass('loading', 'show', false);
-            showElement('modelViewer', true);
-            toggleClass('downloadBtn', 'show', true);
-            updateStatus('✅ 3D asset generated successfully!', 'success');
+            // Re-enable button in both cases
+            const generateBtn = document.getElementById('generateBtn');
+            generateBtn.disabled = false;
+            generateBtn.textContent = '🚀 Generate 3D Asset';
             
         } else if (data.status === 'processing') {
             updateStatus('🔄 ' + (data.message || 'Still generating...'), 'processing');
@@ -165,25 +173,73 @@ async function pollStatus(jobId) {
         updateStatus(`❌ Error: ${error.message}`, 'error');
         toggleClass('loading', 'show', false);
         showElement('placeholder', true);
+        
+        // Re-enable button on error
+        const generateBtn = document.getElementById('generateBtn');
+        generateBtn.disabled = false;
+        generateBtn.textContent = '🚀 Generate 3D Asset';
     }
 }
 
-// Download the generated model
-function downloadModel() {
+// Download the generated model and open in viewer
+async function downloadModel() {
     if (!currentModelUrl) {
         updateStatus('❌ No model available for download', 'error');
         return;
     }
     
-    // Create download link
-    const link = document.createElement('a');
-    link.href = currentModelUrl;
-    link.download = 'generated_model.glb';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    
-    updateStatus('📥 Model downloaded successfully!', 'success');
+    try {
+        // Fetch the model as blob
+        const response = await fetch(currentModelUrl);
+        if (!response.ok) throw new Error('Failed to fetch model');
+        
+        const blob = await response.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        
+        // 1. Download the file
+        const downloadLink = document.createElement('a');
+        downloadLink.href = blobUrl;
+        downloadLink.download = 'generated_model.glb';
+        document.body.appendChild(downloadLink);
+        downloadLink.click();
+        document.body.removeChild(downloadLink);
+        
+        // 2. Open in new tab for viewing
+        // Store blob data in localStorage for the viewer page
+        const modelData = {
+            blob: blobUrl,
+            jobId: currentModelUrl.split('/').pop().replace('.glb', '') || 'generated_model',
+            timestamp: Date.now()
+        };
+        
+        // Open viewer in new tab
+        const viewerWindow = window.open('viewer.html', '_blank');
+        
+        // Wait a bit for the viewer window to load, then pass the blob
+        setTimeout(() => {
+            try {
+                if (viewerWindow && !viewerWindow.closed) {
+                    // Try to directly pass the blob via postMessage
+                    viewerWindow.postMessage({
+                        type: 'MODEL_DATA',
+                        blobUrl: blobUrl,
+                        jobId: modelData.jobId
+                    }, '*');
+                }
+            } catch (e) {
+                console.log('Could not post message to viewer:', e);
+            }
+        }, 1000);
+        
+        updateStatus('📥 Model downloaded and opened in viewer!', 'success');
+        
+        // Clean up the blob URL after a delay
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+        
+    } catch (error) {
+        console.error('Error downloading model:', error);
+        updateStatus(`❌ Download failed: ${error.message}`, 'error');
+    }
 }
 
 // Handle Enter key in textarea
@@ -196,4 +252,16 @@ document.getElementById('prompt').addEventListener('keydown', function(event) {
 // Initialize page
 document.addEventListener('DOMContentLoaded', function() {
     updateStatus('Ready to generate your 3D asset', 'idle');
+    
+    // Attach event listeners
+    const generateBtn = document.getElementById('generateBtn');
+    const downloadBtn = document.getElementById('downloadBtn');
+    
+    if (generateBtn) {
+        generateBtn.addEventListener('click', generateAsset);
+    }
+    
+    if (downloadBtn) {
+        downloadBtn.addEventListener('click', downloadModel);
+    }
 });

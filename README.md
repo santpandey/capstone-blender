@@ -81,40 +81,68 @@ uv sync --extra dev --extra web --extra mcp --extra vector
 
 ## Quick Start
 
-### 🚀 **Option 1: Docker (Recommended)**
+### 🚀 **Local Mode (Recommended for Development)**
+
+**Prerequisites:**
+- Blender installed on your system
+- Python 3.11+
+- Gemini API key
+
+**Setup:**
+
+1. **Configure environment:**
+```bash
+# Create .env file
+echo "EXECUTION_MODE=local" > .env
+echo "GEMINI_API_KEY=your_api_key_here" >> .env
+```
+
+2. **Update Blender path** in `blender_executor.py`:
+```python
+BLENDER_EXECUTABLE = r"D:\blender.exe"  # Update to your Blender path
+```
+
+3. **Start the backend:**
+```bash
+# Activate virtual environment
+.\capstone_venc\Scripts\Activate.ps1  # Windows
+source capstone_venc/bin/activate     # Linux/Mac
+
+# Start server
+python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+4. **Open frontend:**
+```bash
+# Open in browser
+file:///path/to/capstone/front_end/index.html
+```
+
+5. **Generate assets!** 🎨
+- Enter a prompt like "Create a red cricket ball"
+- Watch the backend logs for detailed execution steps
+- Download and view your 3D asset
+
+**How it works:**
+- Backend generates Python script from your prompt
+- Automatically starts Blender in headless mode
+- Executes script and exports GLB
+- Returns model for download - all automatically!
+
+### 🐳 **Docker Mode (Production)**
 
 ```bash
-# Clone the repository
-git clone <your-repo-url>
-cd capstone
+# Set environment
+echo "EXECUTION_MODE=docker" > .env
 
-# Start the application
-./start.sh  # Linux/Mac
-start.bat   # Windows
+# Start with Docker Compose
+docker-compose up --build
 
 # Access the web interface
 open http://localhost:3000
 ```
 
-### 🛠️ **Option 2: Development Mode**
-
-```bash
-# Install dependencies
-uv sync --extra web --extra mcp --extra vector
-
-# Start backend
-cd backend
-uv run python main.py &
-
-# Start frontend (separate terminal)
-cd front_end
-python -m http.server 3000
-
-# Access the web interface
-open http://localhost:3000
-```
-
-### 🌐 **Option 3: AWS Deployment**
+### 🌐 **AWS Deployment**
 
 ```bash
 # Deploy to AWS
@@ -123,6 +151,8 @@ cd aws
 
 # Access via your domain or ALB DNS
 ```
+
+See `docs/DEPLOYMENT.md` for detailed AWS setup instructions.
 
 ## Usage
 
@@ -180,28 +210,43 @@ Extracts and processes Blender API documentation for the agent system.
 ```
 capstone/
 ├── agents/                     # Multi-agent system
-│   ├── __init__.py            # Agent exports and models
-│   ├── base_agent.py          # Base agent class
-│   ├── planner_agent.py       # Task planning and decomposition
-│   ├── coordinator_agent.py   # API mapping and coordination
-│   ├── coder_agent.py         # Script generation
-│   ├── qa_agent.py            # Quality assurance
-│   └── llm_api_mapper.py      # LLM-powered API mapping
-├── prompts/                   # LLM prompts and templates
-│   ├── api_mapper_prompts.py  # API mapping prompts
-│   └── __init__.py
-├── vector_store/              # Vector storage for API search
-│   ├── faiss_store.py         # FAISS-based vector store
-│   └── base.py                # Base vector store interface
-├── config/                    # Configuration files
-│   ├── agents_config.yaml     # Agent configuration
-│   └── vector_store_config.yaml # Vector store settings
-├── test_complete_pipeline.py  # Main entry point
-├── blender_api_parser.py      # API extraction script
-├── blender_api_registry.json  # Generated API registry (2000+ APIs)
-├── generated_script.py        # Latest generated Blender script
-├── pyproject.toml             # Project configuration
-└── README.md                  # This file
+│   ├── planner_agent.py        # Task planning and decomposition
+│   ├── coordinator_agent.py    # API mapping and coordination
+│   ├── coder_agent.py          # Script generation with templating
+│   ├── qa_agent.py             # Quality assurance and validation
+│   ├── llm_api_mapper.py       # LLM-powered API mapping
+│   └── api_search/             # Intelligent API search engine
+├── backend/                    # FastAPI backend
+│   ├── main.py                 # Main API server
+│   └── monitoring.py           # Health checks and metrics
+├── front_end/                  # Web interface
+│   ├── index.html              # Main UI
+│   ├── app.js                  # Frontend logic
+│   ├── styles.css              # Styling
+│   └── viewer.html             # 3D model viewer
+├── config/                     # Configuration files
+│   ├── agents_config.yaml      # Agent settings
+│   ├── curated_allowlist.json  # Material allowlist
+│   └── vector_store_config.yaml
+├── docs/                       # Documentation
+│   ├── DEPLOYMENT.md           # AWS deployment guide
+│   ├── LOCAL_MODE_NEW_APPROACH.md  # Local mode architecture
+│   ├── IMPLEMENTATION_SUMMARY.md   # Project summary
+│   ├── FRONTEND_VIEWER_ENHANCEMENT.md
+│   └── USER_GUIDE_VIEWER.md
+├── aws/                        # AWS infrastructure
+│   ├── terraform/              # Terraform IaC
+│   ├── deploy.sh               # Deployment script
+│   └── destroy.sh              # Cleanup script
+├── generated_scripts/          # Generated Blender scripts
+├── generated_models/           # Exported GLB files
+├── blender_executor.py         # Headless Blender execution engine
+├── blender_api_registry.json   # Comprehensive API registry (2414 APIs)
+├── requirements.txt            # Python dependencies
+├── Dockerfile                  # Production container
+├── docker-compose.yml          # Multi-container setup
+├── .env                        # Environment configuration
+└── README.md                   # This file
 ```
 
 ## Development

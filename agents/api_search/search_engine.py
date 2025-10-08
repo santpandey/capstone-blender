@@ -28,12 +28,12 @@ class OptimizedAPISearcher:
     High-performance API search engine with hybrid search strategies
     """
     
-    def __init__(self, config: Optional[SearchConfig] = None):
+    def __init__(self, config: Optional[SearchConfig] = None, api_registry_path: Optional[str] = None):
         self.config = config or SearchConfig()
         self.logger = logging.getLogger(__name__)
         
         # Core components
-        self.registry_loader = APIRegistryLoader()
+        self.registry_loader = APIRegistryLoader(registry_path=api_registry_path)
         self.indices = CompositeIndex()
         
         # Performance tracking

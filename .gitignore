@@ -5,12 +5,58 @@ build/
 dist/
 wheels/
 *.egg-info
-*.json
-*.env
-/document/
-/faiss_index/
 *.pyc 
 
+# Environment files
+.env
+*.env
+!.env.local.template
 
 # Virtual environments
-.venv
+.venv/
+venv/
+capstone_venv/
+capstone_venc/
+
+# Generated outputs
+generated_scripts/*.py
+generated_models/*.glb
+output.glb
+output.gltf
+generated_script.py
+
+# Vector stores and indices
+/document/
+/faiss_index/
+vector_store/data/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+.local_mode_status
+
+# Blender documentation (too large)
+blender_python_reference_4_4/
+
+# Experimental/temporary files
+blender_view_fix.py
+agents/blender_llm_client.py
+agents/blender_llm_client_stub.py
+agents/tokenization_gwen.py
+
+# AWS sensitive files (if they contain secrets)
+aws/terraform/secrets.tf

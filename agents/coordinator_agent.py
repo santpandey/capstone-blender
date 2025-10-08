@@ -19,9 +19,10 @@ from .llm_api_mapper import LLMAPIMapper
 from .api_search import (
     OptimizedAPISearcher,
     SearchConfig,
-    create_search_context
+    create_search_context,
+    SearchContext,
+    APICategory
 )
-from .api_search.models import SearchContext, APICategory
 
 class CoordinatorAgent(BaseAgent):
     """
@@ -35,7 +36,7 @@ class CoordinatorAgent(BaseAgent):
     5. Generate execution strategy for the Coder Agent
     """
     
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, api_registry_path: str, config: Optional[Dict[str, Any]] = None):
         super().__init__(
             agent_type=AgentType.COORDINATOR,
             name="coordinator_agent",
@@ -50,7 +51,8 @@ class CoordinatorAgent(BaseAgent):
             lazy_load_embeddings=True,
             max_concurrent_searches=5
         )
-        self.api_searcher = OptimizedAPISearcher(search_config)
+        # Pass the registry path to the searcher
+        self.api_searcher = OptimizedAPISearcher(search_config, api_registry_path=api_registry_path)
         
         # Initialize LLM-based API mapper
         try:
@@ -91,6 +93,9 @@ class CoordinatorAgent(BaseAgent):
         # Performance tracking
         self.coordination_metrics = []
         self._initialized = False
+        # LLM retry configuration
+        self.llm_retry_mode = (self.config or {}).get("llm_retry_mode", "none")
+        self.llm_max_retries = int((self.config or {}).get("llm_max_retries", 3))
     
     async def initialize(self) -> bool:
         """Initialize the coordinator agent and its search engine"""
@@ -149,7 +154,14 @@ class CoordinatorAgent(BaseAgent):
             resource_requirements = self._calculate_resource_requirements(validated_mappings)
             
             coordination_time = (time.time() - start_time) * 1000
-            
+            # Aggregate total Gemini calls from the LLM mapper (if available)
+            gemini_calls = 0
+            try:
+                if self.use_llm_mapping and self.llm_mapper and hasattr(self.llm_mapper, "gemini_calls_made"):
+                    gemini_calls = int(self.llm_mapper.gemini_calls_made)
+            except Exception:
+                gemini_calls = 0
+            self.logger.info(f"Total Gemini calls in this coordination flow: {gemini_calls}")
             return CoordinatorOutput(
                 agent_type=AgentType.COORDINATOR,
                 status=AgentStatus.COMPLETED,
@@ -159,13 +171,18 @@ class CoordinatorAgent(BaseAgent):
                     "plan_analysis": plan_analysis,
                     "coordination_time_ms": coordination_time,
                     "total_api_calls": sum(len(mapping.api_calls) for mapping in validated_mappings),
-                    "avg_confidence": sum(mapping.confidence_score for mapping in validated_mappings) / max(len(validated_mappings), 1)
+                    "avg_confidence": sum(mapping.confidence_score for mapping in validated_mappings) / max(len(validated_mappings), 1),
+                    "gemini_calls_made": gemini_calls
                 },
                 api_mappings=validated_mappings,
                 execution_strategy=execution_strategy,
                 resource_requirements=resource_requirements
             )
             
+        # CRITICAL: Wait for 1 second to respect API rate limits (e.g., 60 RPM for Gemini)
+        # if i < len(subtasks) - 1:  # Don't wait after the last task
+        #     self.logger.info("    Waiting 1 second before next API call to respect rate limits...")
+        #     await asyncio.sleep(1)
         except Exception as e:
             self.logger.error(f"Coordination failed: {e}")
             return CoordinatorOutput(
@@ -246,26 +263,41 @@ class CoordinatorAgent(BaseAgent):
         subtasks: List[SubTask], 
         execution_context: Dict[str, Any]
     ) -> List[APIMapping]:
-        """Generate API mappings for all subtasks concurrently"""
+        """Generate API mappings for all subtasks sequentially with rate limiting."""
         
-        # Create mapping tasks for concurrent execution
-        mapping_tasks = []
-        for subtask in subtasks:
-            task = self._map_subtask_to_apis(subtask, execution_context)
-            mapping_tasks.append(task)
+        api_mappings = []
+        self.logger.info(f"Starting sequential mapping for {len(subtasks)} subtasks.")
+
+        for i, subtask in enumerate(subtasks):
+            self.logger.info(f"--> Processing subtask {i+1}/{len(subtasks)}: '{subtask.title}'")
+            try:
+                # Await the mapping for the single subtask
+                mapping = await self._map_subtask_to_apis(subtask, execution_context)
+                
+                if mapping:
+                    api_mappings.append(mapping)
+                    self.logger.info(f"    Successfully mapped subtask '{subtask.title}'.")
+                else:
+                    # This case might happen if _map_subtask_to_apis returns None
+                    self.logger.warning(f"    Mapping for subtask '{subtask.title}' returned None. Generating fallback.")
+                    api_mappings.append(self._generate_basic_api_mapping(subtask))
+
+            except Exception as e:
+                self.logger.error(f"    An exception occurred while mapping subtask '{subtask.title}': {e}", exc_info=True)
+                self.logger.warning(f"    Generating fallback mapping for failed subtask '{subtask.title}'.")
+                api_mappings.append(self._generate_basic_api_mapping(subtask))
+
+            # Removed previous rate-limit delay to improve responsiveness; Tier-1 limits are sufficient.
+            # If needed, reintroduce adaptive throttling here.
+
+        self.logger.info("Finished sequential mapping of all subtasks.")
         
-        # Execute all mappings concurrently
-        api_mappings = await asyncio.gather(*mapping_tasks, return_exceptions=True)
+        # Deduplicate API mappings to avoid creating multiple identical objects
+        deduplicated_mappings = self._deduplicate_mappings(api_mappings)
+        if len(deduplicated_mappings) < len(api_mappings):
+            self.logger.info(f"Deduplicated {len(api_mappings) - len(deduplicated_mappings)} duplicate API mappings")
         
-        # Filter out exceptions and log errors
-        valid_mappings = []
-        for i, mapping in enumerate(api_mappings):
-            if isinstance(mapping, Exception):
-                self.logger.error(f"Failed to map subtask {subtasks[i].task_id}: {mapping}")
-            else:
-                valid_mappings.append(mapping)
-        
-        return valid_mappings
+        return deduplicated_mappings
     
     async def _map_subtask_to_apis(
         self, 
@@ -278,9 +310,16 @@ class CoordinatorAgent(BaseAgent):
         if self.use_llm_mapping and self.llm_mapper:
             try:
                 self.logger.info(f"Using LLM to map subtask: {subtask.title}")
-                
+                # Build a curated allowed API shortlist for this subtask
+                allowed_apis = await self.llm_mapper._get_allowed_apis(subtask)
                 # Get LLM-generated API calls
-                llm_api_calls = await self.llm_mapper.map_subtask_to_apis(subtask)
+                llm_api_calls = await self.llm_mapper.map_subtask_to_apis(
+                    subtask,
+                    max_retries=self.llm_max_retries,
+                    retry_mode=self.llm_retry_mode,
+                    allowed_apis=allowed_apis,
+                    context=execution_context  # Pass original prompt context
+                )
                 
                 if llm_api_calls:
                     # Convert LLM response to APIMapping format
@@ -408,14 +447,24 @@ class CoordinatorAgent(BaseAgent):
         }
         
         # Get basic API calls for this task type
-        api_calls = basic_mappings.get(subtask.type, [
-            {
-                "api_name": "bpy.ops.mesh.primitive_cube_add",
-                "parameters": {"size": 2.0, "location": [0, 0, 0]},
-                "description": "Create basic cube primitive",
+        # No hardcoded cube fallback - use task-specific defaults with visible sizes
+        default_fallback = []
+        if 'mug' in subtask.title.lower() or 'cup' in subtask.title.lower():
+            default_fallback = [{
+                "api_name": "bpy.ops.mesh.primitive_cylinder_add",
+                "parameters": {"radius": 1.5, "depth": 3.6, "location": [0, 0, 1.8]},  # 3x larger
+                "description": "Create cylinder for mug/cup",
                 "execution_order": 1
-            }
-        ])
+            }]
+        elif 'ball' in subtask.title.lower() or 'balloon' in subtask.title.lower():
+            default_fallback = [{
+                "api_name": "bpy.ops.mesh.primitive_uv_sphere_add",
+                "parameters": {"radius": 2.0, "location": [0, 0, 2.0]},  # 2x larger
+                "description": "Create sphere for ball/balloon",
+                "execution_order": 1
+            }]
+        
+        api_calls = basic_mappings.get(subtask.type, default_fallback)
         
         return APIMapping(
             subtask_id=subtask.task_id,
@@ -839,6 +888,34 @@ class CoordinatorAgent(BaseAgent):
             health["search_engine_memory_mb"] = search_health.get("memory_usage_mb", 0)
         
         return health
+    
+    def _deduplicate_mappings(self, mappings: List[APIMapping]) -> List[APIMapping]:
+        """Remove duplicate API mappings that would create identical objects"""
+        seen_signatures = set()
+        unique_mappings = []
+        
+        for mapping in mappings:
+            # Create signature from API calls (ignore parameters that vary)
+            signature_parts = []
+            for call in mapping.api_calls:
+                api_name = call['api_name']
+                # For primitives, just use the API name as signature
+                if 'primitive' in api_name or 'text_add' in api_name:
+                    signature_parts.append(api_name)
+                # For other operations, include key parameters
+                else:
+                    params_str = str(sorted(call.get('parameters', {}).items()))
+                    signature_parts.append(f"{api_name}:{params_str}")
+            
+            signature = tuple(signature_parts)
+            
+            if signature not in seen_signatures:
+                seen_signatures.add(signature)
+                unique_mappings.append(mapping)
+            else:
+                self.logger.info(f"Skipping duplicate mapping for subtask {mapping.subtask_id}")
+        
+        return unique_mappings
     
     def __del__(self):
         """Cleanup resources"""
