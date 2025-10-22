@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Model Viewer</title>
+    <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+        }
+        
+        .header {
+            background: white;
+            border-radius: 15px 15px 0 0;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        .header h1 {
+            color: #333;
+            font-size: 1.8rem;
+            margin-bottom: 5px;
+        }
+        
+        .header p {
+            color: #666;
+            font-size: 0.9rem;
+        }
+        
+        .viewer-container {
+            flex: 1;
+            background: white;
+            border-radius: 0 0 15px 15px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            margin-top: 2px;
+        }
+        
+        .model-wrapper {
+            flex: 1;
+            background: #f8f9fa;
+            border-radius: 10px;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 500px;
+            position: relative;
+        }
+        
+        model-viewer {
+            width: 100%;
+            height: 100%;
+            min-height: 500px;
+        }
+        
+        .loading {
+            text-align: center;
+            color: #666;
+        }
+        
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #4facfe;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-top: 20px;
+            flex-wrap: wrap;
+        }
+        
+        .control-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        
+        .control-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+        }
+        
+        .control-btn.download {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+        }
+        
+        .control-btn.reset {
+            background: linear-gradient(135deg, #ffc107 0%, #ff9800 100%);
+        }
+        
+        .info-panel {
+            background: #e9ecef;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+            display: none;
+        }
+        
+        .info-panel.show {
+            display: block;
+        }
+        
+        .info-panel h3 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 1rem;
+        }
+        
+        .info-panel p {
+            color: #666;
+            font-size: 0.9rem;
+            margin: 5px 0;
+        }
+        
+        .error-message {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        
+        .hotkeys {
+            background: white;
+            border: 1px solid #e1e5e9;
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+            font-size: 0.85rem;
+            color: #666;
+        }
+        
+        .hotkeys strong {
+            color: #333;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🎨 3D Model Viewer</h1>
+        <p id="modelName">Loading your generated 3D asset...</p>
+    </div>
+    
+    <div class="viewer-container">
+        <div class="model-wrapper" id="modelWrapper">
+            <div id="loading" class="loading">
+                <div class="spinner"></div>
+                <p><strong>Loading 3D Model...</strong></p>
+                <p><small>Please wait while we prepare your asset</small></p>
+            </div>
+            
+            <model-viewer 
+                id="modelViewer"
+                style="display: none;"
+                camera-controls 
+                auto-rotate 
+                environment-image="neutral"
+                shadow-intensity="1"
+                shadow-softness="0.5"
+                exposure="1"
+                ar
+                ar-modes="webxr scene-viewer quick-look"
+                touch-action="pan-y"
+            >
+                <div slot="progress-bar"></div>
+            </model-viewer>
+            
+            <div id="errorMessage" class="error-message" style="display: none;">
+                <h2>❌ Failed to Load Model</h2>
+                <p id="errorText">Could not load the 3D model. Please try again.</p>
+            </div>
+        </div>
+        
+        <div class="controls">
+            <button class="control-btn download" onclick="downloadModel()">
+                📥 Download GLB
+            </button>
+            <button class="control-btn reset" onclick="resetCamera()">
+                🔄 Reset Camera
+            </button>
+            <button class="control-btn" onclick="toggleAutoRotate()">
+                🔁 Toggle Rotation
+            </button>
+            <button class="control-btn" onclick="toggleInfo()">
+                ℹ️ Model Info
+            </button>
+        </div>
+        
+        <div id="infoPanel" class="info-panel">
+            <h3>📊 Model Information</h3>
+            <p><strong>File:</strong> <span id="fileName">generated_model.glb</span></p>
+            <p><strong>Format:</strong> GLTF 2.0 Binary (.glb)</p>
+            <p><strong>Generated:</strong> <span id="generatedTime">Just now</span></p>
+        </div>
+        
+        <div class="hotkeys">
+            <strong>🎮 Controls:</strong> 
+            Left-click + drag to rotate | Right-click + drag to pan | Scroll to zoom | 
+            Double-click to reset view
+        </div>
+    </div>
+    
+    <script>
+        let currentModelBlob = null;
+        let currentModelUrl = null;
+        let autoRotate = true;
+        
+        // Get model URL from query parameter or localStorage
+        async function loadModel() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const modelUrl = urlParams.get('model');
+            const jobId = urlParams.get('jobId') || 'generated_model';
+            
+            if (!modelUrl) {
+                // Try to get from localStorage (passed from parent window)
+                const storedModel = localStorage.getItem('pending_model');
+                if (storedModel) {
+                    const modelData = JSON.parse(storedModel);
+                    await displayModelFromBlob(modelData.blob, modelData.jobId);
+                    localStorage.removeItem('pending_model');
+                    return;
+                }
+                
+                showError('No model URL provided');
+                return;
+            }
+            
+            try {
+                // Fetch the model
+                const response = await fetch(modelUrl);
+                if (!response.ok) throw new Error('Failed to fetch model');
+                
+                const blob = await response.blob();
+                await displayModelFromBlob(blob, jobId);
+                
+            } catch (error) {
+                console.error('Error loading model:', error);
+                showError(error.message);
+            }
+        }
+        
+        async function displayModelFromBlob(blob, jobId) {
+            currentModelBlob = blob;
+            currentModelUrl = URL.createObjectURL(blob);
+            
+            const modelViewer = document.getElementById('modelViewer');
+            const loading = document.getElementById('loading');
+            
+            modelViewer.src = currentModelUrl;
+            
+            // Update file name display
+            document.getElementById('fileName').textContent = `${jobId}.glb`;
+            document.getElementById('modelName').textContent = `Generated Model: ${jobId}.glb`;
+            document.getElementById('generatedTime').textContent = new Date().toLocaleString();
+            
+            // Wait for model to load
+            modelViewer.addEventListener('load', () => {
+                loading.style.display = 'none';
+                modelViewer.style.display = 'block';
+                console.log('Model loaded successfully');
+            });
+            
+            modelViewer.addEventListener('error', (error) => {
+                console.error('Model viewer error:', error);
+                showError('Failed to render 3D model');
+            });
+        }
+        
+        function showError(message) {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('errorMessage').style.display = 'block';
+            document.getElementById('errorText').textContent = message;
+        }
+        
+        function downloadModel() {
+            if (!currentModelBlob) {
+                alert('Model not loaded yet');
+                return;
+            }
+            
+            const link = document.createElement('a');
+            link.href = currentModelUrl;
+            const fileName = document.getElementById('fileName').textContent;
+            link.download = fileName;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            // Show success message briefly
+            const btn = event.target;
+            const originalText = btn.textContent;
+            btn.textContent = '✅ Downloaded!';
+            setTimeout(() => {
+                btn.textContent = originalText;
+            }, 2000);
+        }
+        
+        function resetCamera() {
+            const modelViewer = document.getElementById('modelViewer');
+            modelViewer.resetTurntableRotation();
+            modelViewer.fieldOfView = 'auto';
+            modelViewer.cameraOrbit = 'auto auto auto';
+        }
+        
+        function toggleAutoRotate() {
+            const modelViewer = document.getElementById('modelViewer');
+            autoRotate = !autoRotate;
+            
+            if (autoRotate) {
+                modelViewer.setAttribute('auto-rotate', '');
+            } else {
+                modelViewer.removeAttribute('auto-rotate');
+            }
+            
+            const btn = event.target;
+            btn.textContent = autoRotate ? '⏸️ Pause Rotation' : '▶️ Resume Rotation';
+        }
+        
+        function toggleInfo() {
+            const infoPanel = document.getElementById('infoPanel');
+            infoPanel.classList.toggle('show');
+        }
+        
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'r' || e.key === 'R') resetCamera();
+            if (e.key === 'd' || e.key === 'D') downloadModel();
+            if (e.key === ' ') toggleAutoRotate();
+        });
+        
+        // Listen for postMessage from parent window
+        window.addEventListener('message', async (event) => {
+            if (event.data.type === 'MODEL_DATA') {
+                console.log('Received model data via postMessage');
+                // Use the blob URL directly
+                await displayModelFromUrl(event.data.blobUrl, event.data.jobId);
+            }
+        });
+        
+        async function displayModelFromUrl(url, jobId) {
+            try {
+                const response = await fetch(url);
+                const blob = await response.blob();
+                await displayModelFromBlob(blob, jobId);
+            } catch (error) {
+                console.error('Error loading model from URL:', error);
+                showError('Failed to load model: ' + error.message);
+            }
+        }
+        
+        // Load model on page load
+        window.addEventListener('load', loadModel);
+        
+        // Clean up object URL when page unloads
+        window.addEventListener('beforeunload', () => {
+            if (currentModelUrl) {
+                URL.revokeObjectURL(currentModelUrl);
+            }
+        });
+    </script>
+</body>
+</html>
