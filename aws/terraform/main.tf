@@ -1,4 +1,6 @@
-# AWS Infrastructure for 3D Asset Generator
+# Simplified AWS Infrastructure for 3D Asset Generator
+# Single EC2 instance - No Auto Scaling (low traffic scenario)
+
 terraform {
   required_version = ">= 1.0"
   required_providers {
@@ -13,106 +15,101 @@ provider "aws" {
   region = var.aws_region
 }
 
-# Variables
-variable "aws_region" {
-  description = "AWS region"
-  type        = string
-  default     = "us-east-1"
-}
-
-variable "domain_name" {
-  description = "Domain name for the application"
-  type        = string
-  default     = "3d-generator.yourdomain.com"
-}
-
-variable "instance_type" {
-  description = "EC2 instance type"
-  type        = string
-  default     = "t3.large"  # 2 vCPU, 8GB RAM for Blender
-}
-
 # Data sources
 data "aws_availability_zones" "available" {
   state = "available"
 }
 
-data "aws_ami" "amazon_linux" {
+# Use Ubuntu AMI (better for Docker/Python)
+data "aws_ami" "ubuntu" {
   most_recent = true
-  owners      = ["amazon"]
+  owners      = ["099720109477"] # Canonical
   
   filter {
     name   = "name"
-    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
+    values = ["ubuntu/images/hvm-ssd/ubuntu-22.04-amd64-server-*"]
+  }
+  
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
   }
 }
 
+# ============================================================================
 # VPC and Networking
+# ============================================================================
+
 resource "aws_vpc" "main" {
-  cidr_block           = "10.0.0.0/16"
+  cidr_block           = var.vpc_cidr
   enable_dns_hostnames = true
   enable_dns_support   = true
   
-  tags = {
-    Name = "3d-generator-vpc"
-  }
+  tags = merge(var.tags, {
+    Name = "${var.project_name}-vpc"
+  })
 }
 
 # Internet Gateway
 resource "aws_internet_gateway" "main" {
   vpc_id = aws_vpc.main.id
   
-  tags = {
-    Name = "3d-generator-igw"
-  }
+  tags = merge(var.tags, {
+    Name = "${var.project_name}-igw"
+  })
 }
 
-# Public Subnet (for ALB)
+# Public Subnets (for ALB - 2 for HA)
 resource "aws_subnet" "public" {
   count = 2
   
   vpc_id                  = aws_vpc.main.id
-  cidr_block              = "10.0.${count.index + 1}.0/24"
+  cidr_block              = var.public_subnet_cidrs[count.index]
   availability_zone       = data.aws_availability_zones.available.names[count.index]
   map_public_ip_on_launch = true
   
-  tags = {
-    Name = "3d-generator-public-${count.index + 1}"
-  }
+  tags = merge(var.tags, {
+    Name = "${var.project_name}-public-${count.index + 1}"
+    Tier = "Public"
+  })
 }
 
 # Private Subnet (for EC2)
 resource "aws_subnet" "private" {
   vpc_id            = aws_vpc.main.id
-  cidr_block        = "10.0.10.0/24"
+  cidr_block        = var.private_subnet_cidr
   availability_zone = data.aws_availability_zones.available.names[0]
   
-  tags = {
-    Name = "3d-generator-private"
-  }
+  tags = merge(var.tags, {
+    Name = "${var.project_name}-private"
+    Tier = "Private"
+  })
 }
 
-# NAT Gateway for private subnet internet access
+# Elastic IP for NAT Gateway
 resource "aws_eip" "nat" {
   domain = "vpc"
   
-  tags = {
-    Name = "3d-generator-nat-eip"
-  }
-}
-
-resource "aws_nat_gateway" "main" {
-  allocation_id = aws_eip.nat.id
-  subnet_id     = aws_subnet.public[0].id
-  
-  tags = {
-    Name = "3d-generator-nat"
-  }
+  tags = merge(var.tags, {
+    Name = "${var.project_name}-nat-eip"
+  })
   
   depends_on = [aws_internet_gateway.main]
 }
 
-# Route Tables
+# NAT Gateway (for private subnet internet access)
+resource "aws_nat_gateway" "main" {
+  allocation_id = aws_eip.nat.id
+  subnet_id     = aws_subnet.public[0].id
+  
+  tags = merge(var.tags, {
+    Name = "${var.project_name}-nat"
+  })
+  
+  depends_on = [aws_internet_gateway.main]
+}
+
+# Public Route Table
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
   
@@ -121,11 +118,12 @@ resource "aws_route_table" "public" {
     gateway_id = aws_internet_gateway.main.id
   }
   
-  tags = {
-    Name = "3d-generator-public-rt"
-  }
+  tags = merge(var.tags, {
+    Name = "${var.project_name}-public-rt"
+  })
 }
 
+# Private Route Table
 resource "aws_route_table" "private" {
   vpc_id = aws_vpc.main.id
   
@@ -134,9 +132,9 @@ resource "aws_route_table" "private" {
     nat_gateway_id = aws_nat_gateway.main.id
   }
   
-  tags = {
-    Name = "3d-generator-private-rt"
-  }
+  tags = merge(var.tags, {
+    Name = "${var.project_name}-private-rt"
+  })
 }
 
 # Route Table Associations
@@ -152,12 +150,18 @@ resource "aws_route_table_association" "private" {
   route_table_id = aws_route_table.private.id
 }
 
+# ============================================================================
 # Security Groups
+# ============================================================================
+
+# ALB Security Group
 resource "aws_security_group" "alb" {
-  name_prefix = "3d-generator-alb-"
+  name_prefix = "${var.project_name}-alb-"
+  description = "Security group for Application Load Balancer"
   vpc_id      = aws_vpc.main.id
   
   ingress {
+    description = "HTTP from anywhere"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
@@ -165,6 +169,7 @@ resource "aws_security_group" "alb" {
   }
   
   ingress {
+    description = "HTTPS from anywhere"
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
@@ -172,88 +177,168 @@ resource "aws_security_group" "alb" {
   }
   
   egress {
+    description = "Allow all outbound"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
   
-  tags = {
-    Name = "3d-generator-alb-sg"
-  }
+  tags = merge(var.tags, {
+    Name = "${var.project_name}-alb-sg"
+  })
 }
 
+# EC2 Security Group
 resource "aws_security_group" "ec2" {
-  name_prefix = "3d-generator-ec2-"
+  name_prefix = "${var.project_name}-ec2-"
+  description = "Security group for EC2 instance"
   vpc_id      = aws_vpc.main.id
   
   ingress {
-    from_port       = 3000
-    to_port         = 3000
+    description     = "Application traffic from ALB"
+    from_port       = var.app_port
+    to_port         = var.app_port
     protocol        = "tcp"
     security_groups = [aws_security_group.alb.id]
   }
   
   ingress {
+    description = "SSH from VPC"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["10.0.0.0/16"]  # Only from VPC
+    cidr_blocks = [var.vpc_cidr]
   }
   
   egress {
+    description = "Allow all outbound"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
   
-  tags = {
-    Name = "3d-generator-ec2-sg"
-  }
+  tags = merge(var.tags, {
+    Name = "${var.project_name}-ec2-sg"
+  })
 }
 
+# ============================================================================
+# IAM Roles and Policies
+# ============================================================================
+
+# EC2 IAM Role
+resource "aws_iam_role" "ec2_role" {
+  name = "${var.project_name}-ec2-role"
+  
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = "ec2.amazonaws.com"
+      }
+    }]
+  })
+  
+  tags = var.tags
+}
+
+# CloudWatch Logs Policy
+resource "aws_iam_role_policy" "cloudwatch_logs" {
+  name = "${var.project_name}-cloudwatch-logs"
+  role = aws_iam_role.ec2_role.id
+  
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents",
+        "logs:DescribeLogStreams"
+      ]
+      Resource = "arn:aws:logs:${var.aws_region}:*:log-group:/aws/ec2/${var.project_name}*"
+    }]
+  })
+}
+
+# Secrets Manager Policy
+resource "aws_iam_role_policy" "secrets_manager" {
+  name = "${var.project_name}-secrets-manager"
+  role = aws_iam_role.ec2_role.id
+  
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:DescribeSecret"
+      ]
+      Resource = "arn:aws:secretsmanager:${var.aws_region}:*:secret:${var.project_name}/*"
+    }]
+  })
+}
+
+# EC2 Instance Profile
+resource "aws_iam_instance_profile" "ec2_profile" {
+  name = "${var.project_name}-ec2-profile"
+  role = aws_iam_role.ec2_role.name
+  
+  tags = var.tags
+}
+
+# ============================================================================
 # Application Load Balancer
+# ============================================================================
+
 resource "aws_lb" "main" {
-  name               = "3d-generator-alb"
+  name               = "${var.project_name}-alb"
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
   subnets            = aws_subnet.public[*].id
   
   enable_deletion_protection = false
+  enable_http2               = true
   
-  tags = {
-    Name = "3d-generator-alb"
-  }
+  tags = merge(var.tags, {
+    Name = "${var.project_name}-alb"
+  })
 }
 
 # Target Group
 resource "aws_lb_target_group" "main" {
-  name     = "3d-generator-tg"
-  port     = 3000
+  name     = "${var.project_name}-tg"
+  port     = var.app_port
   protocol = "HTTP"
   vpc_id   = aws_vpc.main.id
   
   health_check {
     enabled             = true
     healthy_threshold   = 2
+    unhealthy_threshold = 3
+    timeout             = 5
     interval            = 30
-    matcher             = "200"
-    path                = "/"
+    path                = var.health_check_path
     port                = "traffic-port"
     protocol            = "HTTP"
-    timeout             = 5
-    unhealthy_threshold = 2
+    matcher             = "200"
   }
   
-  tags = {
-    Name = "3d-generator-tg"
-  }
+  deregistration_delay = 30
+  
+  tags = merge(var.tags, {
+    Name = "${var.project_name}-tg"
+  })
 }
 
-# ALB Listener
-resource "aws_lb_listener" "main" {
+# ALB Listener (HTTP)
+resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.main.arn
   port              = "80"
   protocol          = "HTTP"
@@ -264,71 +349,95 @@ resource "aws_lb_listener" "main" {
   }
 }
 
-# Launch Template
-resource "aws_launch_template" "main" {
-  name_prefix   = "3d-generator-"
-  image_id      = data.aws_ami.amazon_linux.id
-  instance_type = var.instance_type
-  
+# ============================================================================
+# EC2 Instance (Single Instance - No Auto Scaling)
+# ============================================================================
+
+resource "aws_instance" "app" {
+  ami                    = data.aws_ami.ubuntu.id
+  instance_type          = var.instance_type
+  subnet_id              = aws_subnet.private.id
   vpc_security_group_ids = [aws_security_group.ec2.id]
+  iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
   
   user_data = base64encode(templatefile("${path.module}/user_data.sh", {
-    region = var.aws_region
+    region              = var.aws_region
+    project_name        = var.project_name
+    git_repo_url        = var.git_repo_url
+    git_branch          = var.git_branch
+    gemini_secret_name  = var.gemini_secret_name
   }))
   
-  tag_specifications {
-    resource_type = "instance"
-    tags = {
-      Name = "3d-generator-instance"
-    }
+  root_block_device {
+    volume_size           = var.ebs_volume_size
+    volume_type           = var.ebs_volume_type
+    delete_on_termination = true
+    encrypted             = true
+    
+    tags = merge(var.tags, {
+      Name = "${var.project_name}-root-volume"
+    })
   }
   
-  tags = {
-    Name = "3d-generator-lt"
-  }
-}
-
-# Auto Scaling Group
-resource "aws_autoscaling_group" "main" {
-  name                = "3d-generator-asg"
-  vpc_zone_identifier = [aws_subnet.private.id]
-  target_group_arns   = [aws_lb_target_group.main.arn]
-  health_check_type   = "ELB"
-  health_check_grace_period = 300
-  
-  min_size         = 1
-  max_size         = 3
-  desired_capacity = 1
-  
-  launch_template {
-    id      = aws_launch_template.main.id
-    version = "$Latest"
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"  # IMDSv2
+    http_put_response_hop_limit = 1
   }
   
-  tag {
-    key                 = "Name"
-    value               = "3d-generator-asg"
-    propagate_at_launch = false
+  tags = merge(var.tags, {
+    Name = "${var.project_name}-app-instance"
+  })
+  
+  lifecycle {
+    create_before_destroy = true
   }
 }
 
-# Route 53 (Optional - requires existing hosted zone)
-# resource "aws_route53_record" "main" {
-#   zone_id = "YOUR_HOSTED_ZONE_ID"
-#   name    = var.domain_name
-#   type    = "A"
-#   
-#   alias {
-#     name                   = aws_lb.main.dns_name
-#     zone_id                = aws_lb.main.zone_id
-#     evaluate_target_health = true
-#   }
-# }
+# Attach EC2 instance to target group
+resource "aws_lb_target_group_attachment" "app" {
+  target_group_arn = aws_lb_target_group.main.arn
+  target_id        = aws_instance.app.id
+  port             = var.app_port
+}
 
+# ============================================================================
+# CloudWatch Log Group
+# ============================================================================
+
+resource "aws_cloudwatch_log_group" "app" {
+  count = var.enable_cloudwatch_logs ? 1 : 0
+  
+  name              = "/aws/ec2/${var.project_name}"
+  retention_in_days = var.log_retention_days
+  
+  tags = merge(var.tags, {
+    Name = "${var.project_name}-logs"
+  })
+}
+
+# ============================================================================
 # Outputs
-output "load_balancer_dns" {
-  description = "DNS name of the load balancer"
+# ============================================================================
+
+output "alb_dns_name" {
+  description = "DNS name of the Application Load Balancer"
   value       = aws_lb.main.dns_name
+}
+
+output "alb_url" {
+  description = "Full URL of the application"
+  value       = "http://${aws_lb.main.dns_name}"
+}
+
+output "ec2_instance_id" {
+  description = "ID of the EC2 instance"
+  value       = aws_instance.app.id
+}
+
+output "ec2_private_ip" {
+  description = "Private IP of the EC2 instance"
+  value       = aws_instance.app.private_ip
 }
 
 output "vpc_id" {
@@ -336,7 +445,12 @@ output "vpc_id" {
   value       = aws_vpc.main.id
 }
 
-output "private_subnet_id" {
-  description = "ID of the private subnet"
-  value       = aws_subnet.private.id
+output "nat_gateway_ip" {
+  description = "Public IP of the NAT Gateway"
+  value       = aws_eip.nat.public_ip
+}
+
+output "cloudwatch_log_group" {
+  description = "CloudWatch log group name"
+  value       = var.enable_cloudwatch_logs ? aws_cloudwatch_log_group.app[0].name : null
 }
