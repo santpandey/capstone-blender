@@ -5,6 +5,7 @@ Third agent in the multi-agent pipeline for 3D asset generation
 
 import time
 import logging
+import re
 from datetime import datetime
 from typing import Dict, List, Any
 import traceback
@@ -287,7 +288,7 @@ import sys'''
             ])
         return "\n".join(material_creation_code)
 
-    def _fix_text_positioning(self, api_func_str: str, raw_params: Dict) -> Dict:
+    def _fix_text_positioning(self, api_func_str: str, raw_params: Dict, cylinder_radius: float = None) -> Dict:
         """Fix text positioning to be on outer surface of cylinder, not inside."""
         if 'text_add' in api_func_str:
             # ALWAYS fix text positioning and rotation for consistency
@@ -297,23 +298,48 @@ import sys'''
                 if isinstance(location, (list, tuple)) and len(location) >= 3:
                     x, y, z = location[0], location[1], location[2]
                     
-                    # Place text OUTSIDE cylinder at radius + offset
-                    # Use larger offset to ensure it's clearly outside
-                    corrected_location = [0.7, 0, z]  # radius 0.5 + 0.2 offset
-                    self.logger.warning(f"Fixed text position from {location} to {corrected_location} (outer surface)")
+                    # DYNAMIC positioning based on detected cylinder radius
+                    if cylinder_radius and cylinder_radius > 0:
+                        # Place text OUTSIDE cylinder on front visible face
+                        # Use positive Y to place text on side facing camera
+                        text_offset = 0.15  # Small offset from surface
+                        corrected_y = cylinder_radius + text_offset
+                        corrected_x = 0  # Center on X axis  
+                        self.logger.warning(f"Detected cylinder radius: {cylinder_radius}, positioning text at Y={corrected_y}")
+                    else:
+                        # Fallback: assume medium cylinder
+                        corrected_x = 0
+                        corrected_y = 0.65
+                        self.logger.warning(f"No cylinder detected, using fallback position Y={corrected_y}")
+                    
+                    corrected_location = [corrected_x, corrected_y, z]
+                    self.logger.warning(f"Fixed text position from {location} to {corrected_location} (outside cylinder)")
                     raw_params['location'] = corrected_location
             
-            # CRITICAL: Remove any rotation - text should be upright and facing forward
-            # The text at X=0.7 will naturally face toward negative X (toward viewer)
-            if 'rotation' in raw_params:
-                del raw_params['rotation']
-                self.logger.warning("Removed rotation - text will face forward naturally")
+            # CRITICAL: Set rotation for text on cylinder surface
+            # Text needs to be rotated to lie flat and face viewer
+            if cylinder_radius and cylinder_radius > 0:
+                # For text on cylinder:
+                # - 90° X rotation (1.5708) to stand text vertically
+                # - 180° Z rotation (3.14159) to flip text to face outward (not backwards)
+                raw_params['rotation'] = [1.5708, 0, 3.14159]  # 90° X, 0° Y, 180° Z
+                self.logger.warning("Set rotation for cylinder text: [90° X, 0° Y, 180° Z]")
+            else:
+                # For non-cylinder objects, remove rotation
+                if 'rotation' in raw_params:
+                    del raw_params['rotation']
+                    self.logger.warning("Removed rotation - text will face forward naturally")
+            
+            # Fix text size to be reasonable
+            if '_text_size' in raw_params:
+                raw_params['_text_size'] = 0.5  # Smaller, more proportional
         
         return raw_params
     
     def _generate_task_execution_section(self, api_mappings: List[APIMapping]) -> str:
         task_methods = []
         object_counter = {'cylinder': 0, 'sphere': 0, 'cube': 0, 'torus': 0, 'text': 0}
+        detected_cylinder_radius = None  # Track cylinder radius for text positioning
         
         for i, mapping in enumerate(api_mappings):
             method_name = f"execute_task_{i+1:03d}"
@@ -323,8 +349,13 @@ import sys'''
                 api_func_str = api_call['api_name']
                 raw_params = api_call['parameters']  # Keep raw dict for checking
                 
-                # FIX TEXT POSITIONING BEFORE PROCESSING
-                raw_params = self._fix_text_positioning(api_func_str, raw_params)
+                # DETECT CYLINDER RADIUS for later text positioning
+                if 'cylinder' in api_func_str and 'radius' in raw_params:
+                    detected_cylinder_radius = raw_params['radius']
+                    self.logger.info(f"Detected cylinder radius: {detected_cylinder_radius}")
+                
+                # FIX TEXT POSITIONING BEFORE PROCESSING (pass detected radius)
+                raw_params = self._fix_text_positioning(api_func_str, raw_params, detected_cylinder_radius)
                 
                 params_str = self._clean_parameters_for_code(raw_params)  # String for code gen
                 
@@ -368,7 +399,26 @@ import sys'''
                     if obj_type == 'text' and '_note' in raw_params:
                         note_text = raw_params.get('_note', '')
                         if 'Set text body to:' in note_text:
-                            text_content = note_text.split('Set text body to:')[1].strip()
+                            # Extract ONLY the actual text content (first word/phrase after the colon)
+                            text_after_colon = note_text.split('Set text body to:')[1].strip()
+                            
+                            # Look for quoted text first (most reliable)
+                            quoted_match = re.search(r'["\']([^"\']+)["\']', text_after_colon)
+                            if quoted_match:
+                                text_content = quoted_match.group(1)
+                            else:
+                                # No quotes - take first word/phrase before period, comma, or "with"
+                                # Stop at common delimiters
+                                for delimiter in ['.', ',', ' with ', ' on ', ' and ', ' for ']:
+                                    if delimiter in text_after_colon:
+                                        text_content = text_after_colon.split(delimiter)[0].strip()
+                                        break
+                                else:
+                                    # No delimiter found - take first 20 chars max
+                                    text_content = text_after_colon[:20].strip()
+                            
+                            # Clean up any remaining quotes
+                            text_content = text_content.strip('"\'')
                             method_body.append(f"            obj.data.body = '{text_content}'")
                             # Set text size if provided
                             text_size = raw_params.get('_text_size', 0.5)  # Smaller size for better fit

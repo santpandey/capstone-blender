@@ -19,11 +19,11 @@ capstone_venv/
 capstone_venc/
 
 # Generated outputs
-generated_scripts/*.py
+#generated_scripts/*.py
 generated_models/*.glb
 output.glb
 output.gltf
-generated_script.py
+#generated_script.py
 
 # Vector stores and indices
 /document/

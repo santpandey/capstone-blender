@@ -44,8 +44,25 @@ Subtask: "Create a simple cylinder to act as the base of a mug."
   ]
 }
 
-**Example 2: Sphere for Ball**
-Subtask: "Create a sphere primitive for a cricket ball"
+**Example 2: Cube for Box**
+Subtask: "Create a cube primitive"
+
+✅ CORRECT OUTPUT:
+{
+  "api_calls": [
+    {
+      "api_name": "bpy.ops.mesh.primitive_cube_add",
+      "parameters": {
+        "size": 2.0,
+        "location": [0, 0, 1]
+      },
+      "description": "Create cube for box/container"
+    }
+  ]
+}
+
+**Example 3: Sphere for Round Objects**
+Subtask: "Create a sphere primitive"
 
 ✅ CORRECT OUTPUT:
 {
@@ -53,17 +70,17 @@ Subtask: "Create a sphere primitive for a cricket ball"
     {
       "api_name": "bpy.ops.mesh.primitive_uv_sphere_add",
       "parameters": {
-        "radius": 0.8,
-        "location": [0, 0, 0],
+        "radius": 1.0,
+        "location": [0, 0, 1],
         "segments": 32,
         "ring_count": 16
       },
-      "description": "Create UV sphere for cricket ball"
+      "description": "Create UV sphere"
     }
   ]
 }
 
-**Example 3: Text Object on Cylindrical Surface (SINGLE TEXT OBJECT ONLY)**
+**Example 4: Text Object on Cylindrical Surface (SINGLE TEXT OBJECT ONLY)**
 Subtask: "Create text 'Coffee' on outer surface of mug (cylinder radius 0.5), positioned outside, rotated outward, with brown color"
 
 ✅ CORRECT OUTPUT (ONE text object, all properties set):
@@ -92,7 +109,7 @@ Subtask: "Create text 'Coffee' on outer surface of mug (cylinder radius 0.5), po
 - Rotate text to face outward: [1.5708, 0, 1.5708] (90° on X and Z axes)
 - Example: Mug with radius 0.5 → Text at X=0.6 (outside), not X=0 (center/inside)
 
-**Example 4: Material/Color Application**
+**Example 5: Material/Color Application**
 Subtask: "Apply white color to the mug body"
 
 ✅ CORRECT OUTPUT:

@@ -184,11 +184,18 @@ When adding text to a cylindrical object like a mug:
 
 **Example 3:**
 
-*   **User Prompt**: 'A red cricket ball'
+*   **User Prompt**: 'A green cube'
 *   **Your Output**:
-    1.  Create a SPHERE for the ball.
-    2.  Apply red color to the sphere.
-    3.  Optionally add seam details if needed.
+    1.  Create a CUBE.
+    2.  Apply green color to the cube.
+
+**Example 4:**
+
+*   **User Prompt**: 'A white cloud'
+*   **Your Output**:
+    1.  Create multiple SPHERES of different sizes grouped together to form cloud shape.
+    2.  Apply white color to all spheres.
+    3.  Position spheres overlapping to create fluffy cloud appearance.
 
 **Your Task:**
 
