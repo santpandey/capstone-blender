@@ -2,6 +2,41 @@
 
 A comprehensive web application with multi-agent system for generating 3D assets from natural language prompts using Blender automation, intelligent planning, and automated script generation.
 
+[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Blender](https://img.shields.io/badge/Blender-4.0+-orange.svg)](https://www.blender.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com/)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+---
+
+## 📖 Table of Contents
+
+- [Project Overview](#project-overview)
+- [Architecture](#architecture)
+- [Key Components](#key-components)
+- [🚀 Getting Started](#-getting-started)
+  - [Prerequisites](#prerequisites)
+- [📦 Installation](#-installation)
+  - [Step 1: Clone the Repository](#step-1-clone-the-repository)
+  - [Step 2: Set Up Virtual Environment](#step-2-set-up-virtual-environment)
+  - [Step 3: Configure Environment Variables](#step-3-configure-environment-variables)
+  - [Step 4: Configure Blender Path](#step-4-configure-blender-path)
+  - [Step 5: Verify Installation](#step-5-verify-installation)
+- [🎯 Running the Application](#-running-the-application)
+- [🐛 Troubleshooting](#-troubleshooting)
+- [📚 Additional Setup Options](#-additional-setup-options)
+  - [Docker Mode](#-docker-mode-production)
+  - [AWS Deployment](#-aws-deployment)
+- [⚡ Quick Start Summary](#-quick-start-summary)
+- [Usage](#usage)
+- [Project Structure](#project-structure)
+- [Development](#development)
+- [Features](#features)
+- [Contributing](#contributing)
+- [License](#license)
+
+---
+
 ## Project Overview
 
 This project enables dynamic 3D asset creation through a sophisticated multi-agent pipeline:
@@ -56,103 +91,437 @@ Task Planning → API Mapping → Script Generation → Validation → Blender E
 - Maps invalid operations to valid alternatives
 - Handles complex API parameter conversion and validation
 
-## Installation
+## 🚀 Getting Started
 
-1. Install uv (if not already installed):
+### Prerequisites
+
+Before you begin, ensure you have the following installed:
+
+- **Python 3.11 or higher** ([Download](https://www.python.org/downloads/))
+- **Blender 4.0+** ([Download](https://www.blender.org/download/))
+- **Git** ([Download](https://git-scm.com/downloads))
+- **Gemini API Key** ([Get one free](https://makersuite.google.com/app/apikey))
+
+---
+
+## 📦 Installation
+
+### Step 1: Clone the Repository
+
 ```bash
-# Linux/Mac
-curl -LsSf https://astral.sh/uv/install.sh | sh
+git clone https://github.com/your-username/capstone-blender.git
+cd capstone-blender
+```
 
-# Windows
+### Step 2: Set Up Virtual Environment
+
+You have **two options** for managing dependencies: **uv** (modern, faster) or **pip** (traditional).
+
+<details>
+<summary><b>Option A: Using uv (Recommended - Faster & Modern)</b></summary>
+
+#### Install uv
+
+**Windows:**
+```powershell
 powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-2. Clone and install dependencies:
+**Linux/Mac:**
 ```bash
-git clone <repository-url>
-cd capstone
-uv sync --extra web --extra mcp --extra vector
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-3. For development with all extras:
+#### Create Virtual Environment and Install Dependencies
+
 ```bash
+# uv automatically creates a virtual environment and installs dependencies
+uv sync --extra web --extra mcp --extra vector
+
+# For development (includes testing and linting tools)
 uv sync --extra dev --extra web --extra mcp --extra vector
 ```
 
-## Quick Start
+#### Activate Virtual Environment
 
-### 🚀 **Local Mode (Recommended for Development)**
-
-**Prerequisites:**
-- Blender installed on your system
-- Python 3.11+
-- Gemini API key
-
-**Setup:**
-
-1. **Configure environment:**
-```bash
-# Create .env file
-echo "EXECUTION_MODE=local" > .env
-echo "GEMINI_API_KEY=your_api_key_here" >> .env
+**Windows:**
+```powershell
+.\.venv\Scripts\Activate.ps1
 ```
 
-2. **Update Blender path** in `blender_executor.py`:
+**Linux/Mac:**
+```bash
+source .venv/bin/activate
+```
+
+</details>
+
+<details>
+<summary><b>Option B: Using pip (Traditional Method)</b></summary>
+
+#### Create Virtual Environment
+
+**Windows:**
+```powershell
+# Create virtual environment
+python -m venv capstone_venv
+
+# Activate it
+.\capstone_venv\Scripts\Activate.ps1
+```
+
+**Linux/Mac:**
+```bash
+# Create virtual environment
+python3 -m venv capstone_venv
+
+# Activate it
+source capstone_venv/bin/activate
+```
+
+#### Install Dependencies
+
+```bash
+# Upgrade pip
+pip install --upgrade pip
+
+# Install all dependencies
+pip install -r requirements.txt
+
+# For development (optional)
+pip install -r requirements-dev.txt
+```
+
+</details>
+
+---
+
+### Step 3: Configure Environment Variables
+
+Create a `.env` file in the project root:
+
+```bash
+# Windows PowerShell
+@"
+EXECUTION_MODE=local
+GEMINI_API_KEY=your_gemini_api_key_here
+BLENDER_PATH=D:\blender.exe
+LOG_LEVEL=INFO
+"@ | Out-File -FilePath .env -Encoding utf8
+```
+
+```bash
+# Linux/Mac
+cat > .env << EOF
+EXECUTION_MODE=local
+GEMINI_API_KEY=your_gemini_api_key_here
+BLENDER_PATH=/usr/local/bin/blender
+LOG_LEVEL=INFO
+EOF
+```
+
+**⚠️ Important:** Replace `your_gemini_api_key_here` with your actual Gemini API key!
+
+---
+
+### Step 4: Configure Blender Path
+
+The application automatically detects Blender based on your OS, but you can override it:
+
+**Option 1: Environment Variable (Recommended)**
+- Already set in `.env` file above
+
+**Option 2: Update `blender_executor.py`**
 ```python
-BLENDER_EXECUTABLE = r"D:\blender.exe"  # Update to your Blender path
+# Windows
+BLENDER_EXECUTABLE = r"D:\blender.exe"
+
+# Linux
+BLENDER_EXECUTABLE = "/usr/local/bin/blender"
+
+# Mac
+BLENDER_EXECUTABLE = "/Applications/Blender.app/Contents/MacOS/Blender"
 ```
 
-3. **Start the backend:**
-```bash
-# Activate virtual environment
-.\capstone_venc\Scripts\Activate.ps1  # Windows
-source capstone_venc/bin/activate     # Linux/Mac
+**Find your Blender installation:**
 
-# Start server
+**Windows:**
+```powershell
+where blender
+# or check: C:\Program Files\Blender Foundation\Blender 4.0\blender.exe
+```
+
+**Linux:**
+```bash
+which blender
+# or: /usr/bin/blender, /usr/local/bin/blender
+```
+
+**Mac:**
+```bash
+which blender
+# or: /Applications/Blender.app/Contents/MacOS/Blender
+```
+
+---
+
+### Step 5: Verify Installation
+
+Test that everything is set up correctly:
+
+```bash
+# Check Python version
+python --version
+# Should output: Python 3.11.x or higher
+
+# Check Blender is accessible
+blender --version
+# Should output: Blender 4.0.x or higher
+
+# Test the pipeline (optional)
+python test_complete_pipeline.py
+```
+
+---
+
+## 🎯 Running the Application
+
+### Local Development Mode
+
+#### Start the Backend Server
+
+**Using uv:**
+```bash
+uv run uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+**Using pip:**
+```bash
 python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-4. **Open frontend:**
-```bash
-# Open in browser
-file:///path/to/capstone/front_end/index.html
+You should see:
+```
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process
 ```
 
-5. **Generate assets!** 🎨
-- Enter a prompt like "Create a red cricket ball"
-- Watch the backend logs for detailed execution steps
-- Download and view your 3D asset
+#### Open the Frontend
 
-**How it works:**
-- Backend generates Python script from your prompt
-- Automatically starts Blender in headless mode
-- Executes script and exports GLB
-- Returns model for download - all automatically!
-
-### 🐳 **Docker Mode (Production)**
-
+**Option 1: Direct File (Simple)**
 ```bash
-# Set environment
-echo "EXECUTION_MODE=docker" > .env
+# Windows
+start front_end/index.html
 
-# Start with Docker Compose
+# Linux
+xdg-open front_end/index.html
+
+# Mac
+open front_end/index.html
+```
+
+**Option 2: Local Web Server (Better for CORS)**
+```bash
+# Python 3
+python -m http.server 3000
+
+# Then open: http://localhost:3000/front_end/index.html
+```
+
+#### Test the Application
+
+1. Open http://localhost:3000/front_end/index.html in your browser
+2. Enter a prompt: "Create a red cricket ball"
+3. Click "Generate 3D Asset"
+4. Watch the progress in real-time
+5. View and download your 3D model!
+
+---
+
+## 🐛 Troubleshooting
+
+### Common Issues
+
+<details>
+<summary><b>❌ "Blender executable not found"</b></summary>
+
+**Solution:**
+1. Verify Blender is installed: `blender --version`
+2. Update `BLENDER_PATH` in `.env` file
+3. Or update `BLENDER_EXECUTABLE` in `blender_executor.py`
+
+</details>
+
+<details>
+<summary><b>❌ "ModuleNotFoundError: No module named 'fastapi'"</b></summary>
+
+**Solution:**
+```bash
+# Using uv
+uv sync --extra web
+
+# Using pip
+pip install -r requirements.txt
+```
+
+</details>
+
+<details>
+<summary><b>❌ "GEMINI_API_KEY not found"</b></summary>
+
+**Solution:**
+1. Create `.env` file in project root
+2. Add: `GEMINI_API_KEY=your_key_here`
+3. Get API key from: https://makersuite.google.com/app/apikey
+
+</details>
+
+<details>
+<summary><b>❌ "Port 8000 already in use"</b></summary>
+
+**Solution:**
+```bash
+# Use a different port
+uvicorn backend.main:app --host 0.0.0.0 --port 8001 --reload
+
+# Or kill the existing process
+# Windows: taskkill /F /IM python.exe
+# Linux/Mac: lsof -ti:8000 | xargs kill -9
+```
+
+</details>
+
+<details>
+<summary><b>❌ Frontend can't connect to backend</b></summary>
+
+**Solution:**
+1. Verify backend is running: http://localhost:8000/health
+2. Check `API_URL` in `front_end/app.js`:
+   ```javascript
+   const API_URL = 'http://localhost:8000';
+   ```
+3. Open browser console (F12) for error details
+
+</details>
+
+---
+
+## 📚 Additional Setup Options
+
+### 🐳 Docker Mode (Production)
+
+**Prerequisites:**
+- Docker installed ([Download](https://www.docker.com/get-started))
+- Docker Compose installed (included with Docker Desktop)
+
+**Setup:**
+
+1. **Create .env file:**
+```bash
+cat > .env << EOF
+EXECUTION_MODE=docker
+GEMINI_API_KEY=your_gemini_api_key_here
+BLENDER_DOCKER=true
+EOF
+```
+
+2. **Build and start containers:**
+```bash
 docker-compose up --build
-
-# Access the web interface
-open http://localhost:3000
 ```
 
-### 🌐 **AWS Deployment**
+3. **Access the application:**
+```
+http://localhost:3000
+```
+
+4. **Stop containers:**
+```bash
+docker-compose down
+```
+
+**Container Architecture:**
+- **Backend**: FastAPI server with all agents
+- **Blender**: Headless Blender in isolated container
+- **Frontend**: Static web interface
+
+---
+
+### 🌐 AWS Deployment
+
+**For production deployment to AWS with Terraform:**
+
+1. **Install prerequisites:**
+```bash
+# AWS CLI
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+unzip awscliv2.zip && sudo ./aws/install
+
+# Terraform
+wget https://releases.hashicorp.com/terraform/1.6.0/terraform_1.6.0_linux_amd64.zip
+unzip terraform_1.6.0_linux_amd64.zip && sudo mv terraform /usr/local/bin/
+
+# Configure AWS
+aws configure
+```
+
+2. **Create AWS secrets:**
+```bash
+aws secretsmanager create-secret \
+    --name 3d-generator/prod/gemini-api-key \
+    --secret-string '{"api_key":"YOUR_GEMINI_KEY"}' \
+    --region us-east-1
+```
+
+3. **Deploy infrastructure:**
+```bash
+cd aws
+chmod +x *.sh
+./deploy.sh
+```
+
+4. **Access your application:**
+```bash
+# Get ALB URL
+terraform output alb_url
+```
+
+**Complete AWS guides:**
+- `AWS_DEPLOYMENT_STRATEGY.md` - Complete deployment strategy
+- `AWS_DEPLOYMENT_CHECKLIST.md` - Step-by-step checklist
+- `SHUTDOWN_GUIDE.md` - Safe resource cleanup
+
+---
+
+## ⚡ Quick Start Summary
+
+**TL;DR - Get running in 5 minutes:**
 
 ```bash
-# Deploy to AWS
-cd aws
-./deploy.sh your-domain.com
+# 1. Clone repo
+git clone https://github.com/your-username/capstone-blender.git
+cd capstone-blender
 
-# Access via your domain or ALB DNS
+# 2. Create virtual environment (choose one)
+python -m venv venv && source venv/bin/activate  # Linux/Mac
+python -m venv venv && .\venv\Scripts\Activate.ps1  # Windows
+
+# 3. Install dependencies
+pip install -r requirements.txt
+
+# 4. Configure environment
+echo "EXECUTION_MODE=local" > .env
+echo "GEMINI_API_KEY=your_key_here" >> .env
+echo "BLENDER_PATH=/path/to/blender" >> .env
+
+# 5. Start backend
+python -m uvicorn backend.main:app --reload
+
+# 6. Open frontend
+open front_end/index.html  # or start http://localhost:8000 in browser
 ```
 
-See `docs/DEPLOYMENT.md` for detailed AWS setup instructions.
+Done! 🎉
 
 ## Usage
 
@@ -249,28 +618,231 @@ capstone/
 └── README.md                   # This file
 ```
 
-## Development
+## 🛠️ Development
 
-### Code Quality
-- **Black**: Code formatting
-- **isort**: Import sorting
-- **mypy**: Type checking
-- **pytest**: Testing framework
+### Development Setup
 
-### Run formatting:
+**For contributors and developers:**
+
+1. **Fork and clone the repository:**
 ```bash
+git clone https://github.com/your-username/capstone-blender.git
+cd capstone-blender
+```
+
+2. **Install development dependencies:**
+
+**Using uv:**
+```bash
+uv sync --extra dev --extra web --extra mcp --extra vector
+```
+
+**Using pip:**
+```bash
+pip install -r requirements.txt
+pip install -r requirements-dev.txt
+```
+
+3. **Install pre-commit hooks (optional but recommended):**
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+---
+
+### Code Quality Tools
+
+This project uses several tools to maintain code quality:
+
+| Tool | Purpose | Command |
+|------|---------|---------|
+| **Black** | Code formatting | `black .` |
+| **isort** | Import sorting | `isort .` |
+| **mypy** | Type checking | `mypy .` |
+| **pylint** | Linting | `pylint agents backend` |
+| **pytest** | Testing | `pytest` |
+
+---
+
+### Running Code Quality Checks
+
+**Format code:**
+```bash
+# Using uv
 uv run black .
 uv run isort .
+
+# Using pip
+black .
+isort .
 ```
 
-### Run type checking:
+**Type checking:**
 ```bash
-uv run mypy blender_api_parser.py
+# Check specific files
+uv run mypy blender_api_parser.py agents/
+
+# Check entire project
+uv run mypy .
 ```
 
-### Run tests:
+**Linting:**
 ```bash
+uv run pylint agents/ backend/ --disable=C0111,R0903
+```
+
+**Run all quality checks:**
+```bash
+# Format
+black . && isort .
+
+# Type check
+mypy .
+
+# Lint
+pylint agents backend
+
+# Test
+pytest
+```
+
+---
+
+### Running Tests
+
+**Run all tests:**
+```bash
+# Using uv
 uv run pytest
+
+# Using pip
+pytest
+```
+
+**Run specific test file:**
+```bash
+pytest test_complete_pipeline.py -v
+```
+
+**Run with coverage:**
+```bash
+pytest --cov=agents --cov=backend --cov-report=html
+```
+
+**Run integration tests only:**
+```bash
+pytest -m integration
+```
+
+---
+
+### Development Workflow
+
+1. **Create a feature branch:**
+```bash
+git checkout -b feature/your-feature-name
+```
+
+2. **Make your changes and test:**
+```bash
+# Run tests
+pytest
+
+# Check code quality
+black . && isort . && mypy .
+```
+
+3. **Commit your changes:**
+```bash
+git add .
+git commit -m "feat: add your feature description"
+```
+
+4. **Push and create pull request:**
+```bash
+git push origin feature/your-feature-name
+```
+
+---
+
+### Project Development Commands
+
+**Test pipeline end-to-end:**
+```bash
+python test_complete_pipeline.py
+```
+
+**Test local mode execution:**
+```bash
+python test_local_mode.py
+```
+
+**Parse Blender API documentation:**
+```bash
+python blender_api_parser.py
+```
+
+**Start development server with hot reload:**
+```bash
+uvicorn backend.main:app --reload --log-level debug
+```
+
+**Run MCP server (Blender integration):**
+```bash
+python mcp_servers/base_server.py
+```
+
+---
+
+### Debugging
+
+**Enable debug logging:**
+```bash
+# In .env file
+LOG_LEVEL=DEBUG
+```
+
+**Debug specific agent:**
+```python
+# In your test file
+import logging
+logging.basicConfig(level=logging.DEBUG)
+```
+
+**Check Blender execution:**
+```bash
+# Test Blender directly
+blender --background --python your_script.py
+```
+
+---
+
+### Environment Variables for Development
+
+Create a `.env` file for local development:
+
+```bash
+# Execution mode
+EXECUTION_MODE=local
+
+# API Keys
+GEMINI_API_KEY=your_key_here
+
+# Blender configuration
+BLENDER_PATH=D:\blender.exe  # Windows
+# BLENDER_PATH=/usr/local/bin/blender  # Linux/Mac
+BLENDER_DOCKER=false
+
+# Logging
+LOG_LEVEL=DEBUG
+
+# Rate limiting (for Gemini API)
+GEMINI_RPM=15
+GEMINI_RPM_WINDOW_SEC=60
+
+# Development settings
+RELOAD_ON_CHANGE=true
 ```
 
 ## Recent Achievements
@@ -325,10 +897,171 @@ uv run pytest
 - [ ] Batch processing
 - [ ] User authentication and asset galleries
 
-## Contributing
+## 📝 Common Development Tasks
 
-This is a capstone project focused on dynamic 3D asset generation. The system aims to democratize 3D content creation through natural language interfaces.
+### Adding a New Agent
 
-## License
+1. Create agent file in `agents/`:
+```python
+# agents/my_agent.py
+from typing import Dict, Any
 
-MIT License - See LICENSE file for details.
+class MyAgent:
+    def __init__(self):
+        pass
+    
+    def process(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        # Your logic here
+        return {"result": "success"}
+```
+
+2. Update agent configuration in `config/agents_config.yaml`
+3. Add tests in `tests/test_my_agent.py`
+4. Update documentation
+
+### Adding New Blender APIs
+
+1. Update `blender_api_registry.json` (or re-parse Blender docs)
+2. Add to `config/curated_allowlist.json` if needed for materials
+3. Update `agents/simple_validator.py` if new validation rules needed
+4. Test with sample prompts
+
+### Updating Dependencies
+
+**Using uv:**
+```bash
+# Add new dependency
+uv add package-name
+
+# Update all dependencies
+uv sync
+
+# Update specific package
+uv pip install --upgrade package-name
+```
+
+**Using pip:**
+```bash
+# Add to requirements.txt, then:
+pip install -r requirements.txt
+
+# Update all
+pip install --upgrade -r requirements.txt
+```
+
+### Database/Vector Store Changes
+
+```bash
+# Rebuild vector store
+python demo_hybrid_vector_store.py
+
+# Update vector store config
+nano config/vector_store_config.yaml
+```
+
+---
+
+## 🤝 Contributing
+
+We welcome contributions to improve the 3D Asset Generator!
+
+### How to Contribute
+
+1. **Fork the repository**
+2. **Create a feature branch**: `git checkout -b feature/amazing-feature`
+3. **Make your changes**
+4. **Run tests**: `pytest`
+5. **Format code**: `black . && isort .`
+6. **Commit changes**: `git commit -m 'feat: add amazing feature'`
+7. **Push to branch**: `git push origin feature/amazing-feature`
+8. **Open a Pull Request**
+
+### Contribution Guidelines
+
+- Follow PEP 8 style guidelines
+- Add tests for new features
+- Update documentation
+- Ensure all tests pass
+- Use meaningful commit messages (follow [Conventional Commits](https://www.conventionalcommits.org/))
+
+### Areas for Contribution
+
+- 🎨 **3D Modeling**: Improve geometry generation
+- 🤖 **AI Agents**: Enhance LLM prompts and logic
+- 🎨 **Materials**: Add more material types and textures
+- 📚 **Documentation**: Improve guides and examples
+- 🐛 **Bug Fixes**: Report and fix issues
+- ✨ **New Features**: Lighting, cameras, animations
+
+---
+
+## 📞 Support & Resources
+
+### Documentation
+- **Setup Guide**: This README
+- **AWS Deployment**: `AWS_DEPLOYMENT_STRATEGY.md`
+- **Local Mode**: `docs/LOCAL_MODE_NEW_APPROACH.md`
+- **Frontend**: `docs/USER_GUIDE_VIEWER.md`
+- **API Documentation**: `http://localhost:8000/docs` (when running)
+
+### Getting Help
+
+- **Issues**: [GitHub Issues](https://github.com/your-username/capstone-blender/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/your-username/capstone-blender/discussions)
+- **Email**: your-email@example.com
+
+### Useful Links
+
+- [Blender Python API Documentation](https://docs.blender.org/api/current/)
+- [FastAPI Documentation](https://fastapi.tiangolo.com/)
+- [Gemini API Documentation](https://ai.google.dev/docs)
+- [uv Documentation](https://github.com/astral-sh/uv)
+
+---
+
+## 🙏 Acknowledgments
+
+- **Blender Foundation** - For the amazing open-source 3D creation suite
+- **Google AI** - For Gemini API enabling LLM-powered generation
+- **FastAPI** - For the modern, fast web framework
+- **Python Community** - For excellent tools and libraries
+
+---
+
+## 📄 License
+
+MIT License
+
+Copyright (c) 2025 3D Asset Generator Project
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+## ⭐ Star History
+
+If you find this project helpful, please consider giving it a star on GitHub!
+
+[![Star History Chart](https://api.star-history.com/svg?repos=your-username/capstone-blender&type=Date)](https://star-history.com/#your-username/capstone-blender&Date)
+
+---
+
+**Made with ❤️ by the 3D Asset Generator Team**
+
+*Last Updated: January 2025*
