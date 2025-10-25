@@ -1,0 +1,12 @@
+{
+  "materials": [
+    "bpy.data.materials.new",
+    "<material>.use_nodes",
+    "<material>.node_tree.nodes['Principled BSDF']",
+    "<node>.inputs['Base Color'].default_value",
+    "<node>.inputs['Roughness'].default_value",
+    "<node>.inputs['Specular'].default_value",
+    "<object>.data.materials.append",
+    "<object>.data.materials[0]"
+  ]
+}

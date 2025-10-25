@@ -415,7 +415,45 @@ aws cloudwatch get-metric-statistics \
 
 ## 🧹 Cleanup / Teardown
 
-### Destroy Infrastructure
+### ✅ Recommended: Complete Shutdown (Use shutdown.sh)
+
+**Best practice for production teardown:**
+
+```bash
+cd aws
+./shutdown.sh
+```
+
+**Features:**
+- ✅ Comprehensive resource deletion
+- ✅ Verification loop (ensures all deleted)
+- ✅ Waits for slow resources (NAT Gateway)
+- ✅ Force cleanup for stuck resources
+- ✅ Secrets management
+- ✅ Generates deletion reports
+- ✅ No surprise AWS bills
+
+**Time: ~10-15 minutes**
+
+See `aws/SHUTDOWN_GUIDE.md` for detailed documentation.
+
+---
+
+### ⚡ Alternative: Quick Destroy (Use destroy.sh)
+
+**For development/testing only:**
+
+```bash
+cd aws
+./destroy.sh
+```
+
+**Warning**: May leave orphaned resources costing money!
+
+---
+
+### Manual Terraform Destroy
+
 ```bash
 cd aws/terraform
 
@@ -433,7 +471,39 @@ terraform destroy -auto-approve
 # - CloudWatch logs (if retention expired)
 ```
 
+**Warning**: Does NOT verify deletion or wait for resources!
+
+---
+
+### Verify Complete Deletion
+
+```bash
+# Check for remaining resources
+aws ec2 describe-instances \
+    --filters "Name=tag:Project,Values=3D Asset Generator" \
+    --region us-east-1
+
+aws elbv2 describe-load-balancers --region us-east-1
+
+aws ec2 describe-nat-gateways \
+    --filter "Name=tag:Name,Values=3d-generator*" \
+    --region us-east-1
+
+aws ec2 describe-vpcs \
+    --filters "Name=tag:Name,Values=3d-generator*" \
+    --region us-east-1
+```
+
+All commands should return empty results.
+
+---
+
 ### Delete Secrets (Optional)
+
+The `shutdown.sh` script will ask about deleting secrets.
+
+**Manual deletion:**
+
 ```bash
 # Mark for deletion (7-day recovery window)
 aws secretsmanager delete-secret \
@@ -446,6 +516,20 @@ aws secretsmanager delete-secret \
     --force-delete-without-recovery \
     --region us-east-1
 ```
+
+---
+
+### Post-Shutdown Checklist
+
+After running shutdown:
+
+- [ ] All resources verified deleted
+- [ ] Deletion reports saved
+- [ ] Secrets handled (kept or deleted)
+- [ ] Local Terraform state cleaned
+- [ ] Check AWS Console (no resources)
+- [ ] Next month's bill should be ~$0
+- [ ] Generated reports archived
 
 ---
 

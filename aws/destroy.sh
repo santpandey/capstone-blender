@@ -1,9 +1,16 @@
 #!/bin/bash
-# AWS Destruction Script for 3D Asset Generator
+# Quick Terraform Destroy
+# For comprehensive shutdown with verification, use: ./shutdown.sh
 
-set -e
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "🗑️  Destroying 3D Asset Generator AWS infrastructure..."
+echo "=========================================="
+echo "  Quick Terraform Destroy"
+echo "=========================================="
+echo ""
+echo "⚠️  Note: For comprehensive shutdown with verification,"
+echo "    use: ./shutdown.sh"
+echo ""
 
 # Check Terraform
 if ! command -v terraform &> /dev/null; then
@@ -11,20 +18,19 @@ if ! command -v terraform &> /dev/null; then
     exit 1
 fi
 
-# Confirm destruction
-echo "⚠️  This will destroy ALL AWS resources. Are you sure? (y/N)"
-read -r response
-if [[ ! "$response" =~ ^[Yy]$ ]]; then
-    echo "❌ Destruction cancelled."
+cd "$SCRIPT_DIR/terraform"
+
+if [ ! -f "terraform.tfstate" ]; then
+    echo "No terraform state found. Nothing to destroy."
     exit 0
 fi
 
-# Destroy infrastructure
-echo "💥 Destroying infrastructure..."
-cd terraform
-terraform destroy -auto-approve
+echo "Running Terraform destroy..."
+terraform destroy
 
-echo "✅ Infrastructure destroyed!"
-echo "💰 Remember to check for any remaining resources that might incur costs."
-
-cd ..
+echo ""
+echo "✅ Terraform destroy complete!"
+echo ""
+echo "To verify all resources are deleted and cleaned up, run:"
+echo "  ./shutdown.sh"
+echo ""
