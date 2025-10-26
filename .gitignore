@@ -48,6 +48,8 @@ logs/
 # Temporary files
 *.tmp
 .local_mode_status
+uv.lock
+generated_scripts/
 
 # Blender documentation (too large)
 blender_python_reference_4_4/

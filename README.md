@@ -122,13 +122,11 @@ You have **two options** for managing dependencies: **uv** (modern, faster) or *
 
 #### Install uv
 
-**Windows:**
-```powershell
-powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
-
-**Linux/Mac:**
 ```bash
+# Windows PowerShell
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+# Linux
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
@@ -144,13 +142,11 @@ uv sync --extra dev --extra web --extra mcp --extra vector
 
 #### Activate Virtual Environment
 
-**Windows:**
-```powershell
-.\.venv\Scripts\Activate.ps1
-```
-
-**Linux/Mac:**
 ```bash
+# Windows PowerShell
+.\.venv\Scripts\Activate.ps1
+
+# Linux
 source .venv/bin/activate
 ```
 
@@ -161,21 +157,13 @@ source .venv/bin/activate
 
 #### Create Virtual Environment
 
-**Windows:**
-```powershell
-# Create virtual environment
-python -m venv capstone_venv
-
-# Activate it
-.\capstone_venv\Scripts\Activate.ps1
-```
-
-**Linux/Mac:**
 ```bash
-# Create virtual environment
-python3 -m venv capstone_venv
+# Windows PowerShell
+python -m venv capstone_venv
+.\capstone_venv\Scripts\Activate.ps1
 
-# Activate it
+# Linux
+python3 -m venv capstone_venv
 source capstone_venv/bin/activate
 ```
 
@@ -208,10 +196,8 @@ GEMINI_API_KEY=your_gemini_api_key_here
 BLENDER_PATH=D:\blender.exe
 LOG_LEVEL=INFO
 "@ | Out-File -FilePath .env -Encoding utf8
-```
 
-```bash
-# Linux/Mac
+# Linux
 cat > .env << EOF
 EXECUTION_MODE=local
 GEMINI_API_KEY=your_gemini_api_key_here
@@ -239,28 +225,17 @@ BLENDER_EXECUTABLE = r"D:\blender.exe"
 # Linux
 BLENDER_EXECUTABLE = "/usr/local/bin/blender"
 
-# Mac
-BLENDER_EXECUTABLE = "/Applications/Blender.app/Contents/MacOS/Blender"
 ```
 
 **Find your Blender installation:**
-
-**Windows:**
-```powershell
+```bash
+# Windows PowerShell
 where blender
-# or check: C:\Program Files\Blender Foundation\Blender 4.0\blender.exe
-```
+# Common location: C:\Program Files\Blender Foundation\Blender 4.0\blender.exe
 
-**Linux:**
-```bash
+# Linux
 which blender
-# or: /usr/bin/blender, /usr/local/bin/blender
-```
-
-**Mac:**
-```bash
-which blender
-# or: /Applications/Blender.app/Contents/MacOS/Blender
+# Common locations: /usr/bin/blender, /usr/local/bin/blender
 ```
 
 ---
@@ -316,8 +291,6 @@ start front_end/index.html
 # Linux
 xdg-open front_end/index.html
 
-# Mac
-open front_end/index.html
 ```
 
 **Option 2: Local Web Server (Better for CORS)**
@@ -386,7 +359,7 @@ uvicorn backend.main:app --host 0.0.0.0 --port 8001 --reload
 
 # Or kill the existing process
 # Windows: taskkill /F /IM python.exe
-# Linux/Mac: lsof -ti:8000 | xargs kill -9
+# Linux: lsof -ti:8000 | xargs kill -9
 ```
 
 </details>
@@ -447,43 +420,176 @@ docker-compose down
 
 ---
 
-### 🌐 AWS Deployment
+### 🌐 AWS EC2 Deployment
 
-**For production deployment to AWS with Terraform:**
+**Complete step-by-step guide for deploying on Amazon Linux EC2:**
 
-1. **Install prerequisites:**
+#### Prerequisites
+- AWS EC2 instance (Amazon Linux 2 or newer)
+- Security group with ports 22 (SSH), 80 (HTTP), 3000 (Frontend), 8000 (API) open
+- At least 4GB RAM and 20GB storage recommended
+
+#### Step 1: Initial System Setup
 ```bash
-# AWS CLI
-curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-unzip awscliv2.zip && sudo ./aws/install
+# Update system packages
+sudo yum update -y
 
-# Terraform
-wget https://releases.hashicorp.com/terraform/1.6.0/terraform_1.6.0_linux_amd64.zip
-unzip terraform_1.6.0_linux_amd64.zip && sudo mv terraform /usr/local/bin/
+# Install Git
+sudo yum install git -y
 
-# Configure AWS
-aws configure
+# Clone the repository
+git clone https://github.com/santpandey/capstone-blender.git
+cd capstone-blender/
 ```
 
-2. **Create AWS secrets:**
+#### Step 2: Python Environment Setup
 ```bash
-aws secretsmanager create-secret \
-    --name 3d-generator/prod/gemini-api-key \
-    --secret-string '{"api_key":"YOUR_GEMINI_KEY"}' \
-    --region us-east-1
+# Install Python 3.12 and development tools
+sudo yum groupinstall "Development Tools" -y
+sudo yum install -y python3-devel libxml2-devel libxslt-devel zlib-devel
+
+# Install pip and uv (Python package manager)
+sudo yum install pip3 -y
+pip install uv
+
+# Set up virtual environment and install dependencies
+uv sync
+source .venv/bin/activate
 ```
 
-3. **Deploy infrastructure:**
+#### Step 3: Blender Installation
 ```bash
-cd aws
-chmod +x *.sh
-./deploy.sh
+# Enable EPEL repository for additional packages
+sudo amazon-linux-extras enable epel
+sudo yum install epel-release -y
+
+# Install Blender dependencies
+sudo yum install mesa-libGLU-devel mesa-libGL-devel libXi-devel libXrender-devel bzip2 bzip2-devel -y
+
+# Download and install Blender
+wget https://download.blender.org/release/Blender3.6/blender-3.6.1-linux-x64.tar.xz
+tar -xf blender-3.6.1-linux-x64.tar.xz
+sudo mv blender-3.6.1-linux-x64 /opt/blender
+
+# Add Blender to PATH
+echo 'export PATH=/opt/blender:$PATH' >> ~/.bashrc
+source ~/.bashrc
+
+# Verify Blender installation
+blender --version
 ```
 
-4. **Access your application:**
+#### Step 4: Environment Configuration
 ```bash
-# Get ALB URL
-terraform output alb_url
+# Create .env file with your API keys
+cat > .env << EOF
+GEMINI_API_KEY=your_gemini_api_key_here
+BLENDER_EXECUTABLE_PATH=/opt/blender/blender
+EOF
+```
+
+#### Step 5: Systemd Service Setup
+```bash
+# Create backend service
+sudo tee /etc/systemd/system/capstone-backend.service > /dev/null << EOF
+[Unit]
+Description=Capstone Blender Backend API
+After=network.target
+
+[Service]
+Type=simple
+User=ec2-user
+WorkingDirectory=/home/ec2-user/capstone-blender
+Environment=PATH=/home/ec2-user/capstone-blender/.venv/bin
+ExecStart=/home/ec2-user/capstone-blender/.venv/bin/python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Create frontend service
+sudo tee /etc/systemd/system/capstone-frontend.service > /dev/null << EOF
+[Unit]
+Description=Capstone Blender Frontend
+After=network.target
+
+[Service]
+Type=simple
+User=ec2-user
+WorkingDirectory=/home/ec2-user/capstone-blender/front_end
+ExecStart=/usr/bin/python3.12 -m http.server 3000
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Enable and start services
+sudo systemctl daemon-reload
+sudo systemctl enable capstone-backend
+sudo systemctl enable capstone-frontend
+sudo systemctl start capstone-backend
+sudo systemctl start capstone-frontend
+```
+
+#### Step 6: Verify Installation
+```bash
+# Check service status
+sudo systemctl status capstone-backend
+sudo systemctl status capstone-frontend
+
+# Check if services are listening on correct ports
+sudo netstat -tlnp | grep -E ':(3000|8000)'
+
+# Test API endpoint
+curl -X POST http://localhost:8000/generate \
+     -H "Content-Type: application/json" \
+     -d '{"prompt": "Create a simple cube"}'
+```
+
+#### Step 7: Access Your Application
+- **Frontend**: `http://your-ec2-public-ip:3000`
+- **API**: `http://your-ec2-public-ip:8000`
+- **API Documentation**: `http://your-ec2-public-ip:8000/docs`
+
+#### Troubleshooting Commands
+```bash
+# View service logs
+sudo journalctl -u capstone-backend -f
+sudo journalctl -u capstone-frontend -f
+
+# Restart services
+sudo systemctl restart capstone-backend
+sudo systemctl restart capstone-frontend
+
+# Check disk space
+df -h
+
+# Check memory usage
+free -h
+
+# Test Blender directly
+/opt/blender/blender --version
+```
+
+#### Security Considerations
+- Ensure your security group only allows necessary ports
+- Consider using HTTPS with a reverse proxy (nginx)
+- Regularly update system packages: `sudo yum update -y`
+- Monitor service logs for any issues
+
+#### Optional: Nginx Reverse Proxy Setup
+```bash
+# Install nginx
+sudo yum install nginx -y
+
+# Configure nginx (optional - for production)
+sudo cp nginx.conf /etc/nginx/nginx.conf
+sudo systemctl start nginx
+sudo systemctl enable nginx
 ```
 
 **Complete AWS guides:**
@@ -502,8 +608,8 @@ terraform output alb_url
 git clone https://github.com/your-username/capstone-blender.git
 cd capstone-blender
 
-# 2. Create virtual environment (choose one)
-python -m venv venv && source venv/bin/activate  # Linux/Mac
+# 2. Create virtual environment
+python -m venv venv && source venv/bin/activate  # Linux
 python -m venv venv && .\venv\Scripts\Activate.ps1  # Windows
 
 # 3. Install dependencies
@@ -831,7 +937,7 @@ GEMINI_API_KEY=your_key_here
 
 # Blender configuration
 BLENDER_PATH=D:\blender.exe  # Windows
-# BLENDER_PATH=/usr/local/bin/blender  # Linux/Mac
+BLENDER_PATH=/usr/local/bin/blender  # Linux
 BLENDER_DOCKER=false
 
 # Logging
@@ -882,12 +988,12 @@ RELOAD_ON_CHANGE=true
 - [x] Script generation with error handling
 - [x] Asset validation and QA system
 
-### 🚀 **AWS Deployment Ready**
-- [x] **Infrastructure as Code**: Complete Terraform configuration
-- [x] **Auto Scaling**: EC2 Auto Scaling Groups with health checks
-- [x] **Load Balancing**: Application Load Balancer with SSL support
-- [x] **Route 53**: DNS configuration for custom domains
-- [x] **Security**: VPC with public/private subnets, security groups
+### 🚀 **AWS Deployment Ready (Next Phase)**
+- [ ] **Infrastructure as Code**: Complete Terraform configuration
+- [ ] **Auto Scaling**: EC2 Auto Scaling Groups with health checks
+- [ ] **Load Balancing**: Application Load Balancer with SSL support
+- [ ] **Route 53**: DNS configuration for custom domains
+- [ ] **Security**: VPC with public/private subnets, security groups
 
 ### 🔮 **Future Enhancements**
 - [ ] Enhanced object geometry (handles, complex shapes)
@@ -1064,4 +1170,4 @@ If you find this project helpful, please consider giving it a star on GitHub!
 
 **Made with ❤️ by the 3D Asset Generator Team**
 
-*Last Updated: January 2025*
+*Last Updated: Oct 26, 2025*
